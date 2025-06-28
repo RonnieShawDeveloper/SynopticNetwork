@@ -3,6 +3,7 @@ package com.artificialinsightsllc.synopticnetwork.data.services
 import com.artificialinsightsllc.synopticnetwork.data.models.User
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ktx.firestore
+import com.google.firebase.firestore.ktx.toObject
 import com.google.firebase.ktx.Firebase
 import kotlinx.coroutines.tasks.await
 
@@ -12,17 +13,14 @@ import kotlinx.coroutines.tasks.await
 class UserService {
 
     private val db: FirebaseFirestore = Firebase.firestore
+    private val usersCollection = db.collection("users")
 
     /**
      * Creates a new user document in the 'users' collection in Firestore.
-     *
-     * @param user The User object containing all the profile data.
-     * @return True if the document was created successfully, false otherwise.
      */
     suspend fun createUserProfile(user: User): Boolean {
         return try {
-            // The document ID will be the same as the user's Firebase Auth UID
-            db.collection("users").document(user.userId).set(user).await()
+            usersCollection.document(user.userId).set(user).await()
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -31,15 +29,28 @@ class UserService {
     }
 
     /**
-     * Checks if a given screen name already exists in the 'users' collection.
-     * This is crucial for ensuring screen names are unique.
+     * Fetches a user's profile from Firestore.
      *
-     * @param screenName The screen name to check.
-     * @return True if the screen name is already taken, false otherwise.
+     * @param userId The ID of the user to fetch.
+     * @return The User object, or null if not found or an error occurs.
+     */
+    suspend fun getUserProfile(userId: String): User? {
+        return try {
+            usersCollection.document(userId).get().await()
+                .toObject<User>()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+
+    /**
+     * Checks if a given screen name already exists in the 'users' collection.
      */
     suspend fun isScreenNameTaken(screenName: String): Boolean {
         return try {
-            val query = db.collection("users")
+            val query = usersCollection
                 .whereEqualTo("screenName", screenName)
                 .limit(1)
                 .get()
@@ -47,7 +58,6 @@ class UserService {
             !query.isEmpty
         } catch (e: Exception) {
             e.printStackTrace()
-            // If there's an error, we assume the name is taken to be safe.
             true
         }
     }
