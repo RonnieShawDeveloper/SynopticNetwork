@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!--
+      This defines a publicly accessible directory named "images" within our app's private files directory.
+      The FileProvider will grant temporary access to URIs within this path, allowing uCrop
+      to securely access the images we want to crop.
+    -->
+    <files-path
+        name="images"
+        path="images/" />
+</paths>

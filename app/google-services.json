@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "816348789109",
+    "project_id": "synoptic-network-cd8e6",
+    "storage_bucket": "synoptic-network-cd8e6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:816348789109:android:d2364e9cd668cf1543fb3c",
+        "android_client_info": {
+          "package_name": "com.artificialinsightsllc.synopticnetwork"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDrU4onumu2fs1Yv4RYNK7cbdA27TDh-Vs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

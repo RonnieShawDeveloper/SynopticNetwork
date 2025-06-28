@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Permissions required for core app functionality -->
+
+    <!-- Allows the app to access the internet for Firebase services, NWS APIs, etc. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+      Required to access the device's camera. We declare the feature so the
+      Play Store will only show the app to devices that have a camera.
+    -->
+    <uses-feature android:name="android.hardware.camera" />
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!--
+      Required for getting the device's precise location for geo-tagging posts.
+      ACCESS_COARSE_LOCATION is also included as a good practice, although we will request fine.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!--
+      Required on Android 13 (API 33) and above to post notifications. This is crucial
+      for sending severe weather alerts to users.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.SynopticNetwork"
+        tools:targetApi="31">
+
+        <!--
+          Google Maps API Key. The value is fetched from Remote Config at runtime,
+          but the SDK reads it from this meta-data tag.
+        -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="@string/google_maps_key" />
+
+        <!--
+          FileProvider declaration. This is required for securely sharing files (like camera photos)
+          with other applications, such as the uCrop activity. The 'authorities' attribute must be unique,
+          so it's conventional to use the application ID.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/paths" />
+        </provider>
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.SynopticNetwork"
+            android:windowSoftInputMode="adjustResize"> <!-- This helps with keyboard issues -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- The uCrop Activity -->
+        <activity
+            android:name="com.yalantis.ucrop.UCropActivity"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar"/>
+
+    </application>
+
+</manifest>
