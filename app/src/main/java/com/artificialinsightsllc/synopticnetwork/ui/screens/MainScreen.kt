@@ -249,6 +249,9 @@ fun MainScreen(
         // These will be initialized once and retained across recompositions.
         // The ClusterManager itself is tightly coupled with the GoogleMap instance.
         var clusterManagerInstance: ClusterManager<ReportClusterItem>? by remember { mutableStateOf(null) }
+        // New state to hold a reference to the GoogleMap object for cleanup
+        var currentGoogleMap: GoogleMap? by remember { mutableStateOf(null) }
+
 
         GoogleMap(
             modifier = Modifier.fillMaxSize(),
@@ -260,6 +263,9 @@ fun MainScreen(
             // It runs once when the map becomes available and re-runs if `mapState.reports` changes.
             // Also, `googleMap` is the actual GoogleMap object instance.
             MapEffect(mapState.reports) { googleMap ->
+                // Capture the current GoogleMap instance for later cleanup
+                currentGoogleMap = googleMap
+
                 if (clusterManagerInstance == null) {
                     // Initialize ClusterManager and Renderer only once per GoogleMap instance
                     val newClusterManager = ClusterManager<ReportClusterItem>(context, googleMap)
@@ -300,24 +306,18 @@ fun MainScreen(
 
             // DisposableEffect for cleaning up ClusterManager resources when this composable leaves composition.
             // This is correctly placed inside the @Composable scope of MainScreen.
-            // The key is `clusterManagerInstance` to ensure dispose/re-setup if the instance itself changes (e.g., on re-composition)
-            DisposableEffect(clusterManagerInstance) {
+            // We now observe both the clusterManagerInstance and currentGoogleMap for proper cleanup.
+            DisposableEffect(clusterManagerInstance, currentGoogleMap) {
                 onDispose {
-                    // Access the current ClusterManager instance captured in this DisposableEffect's scope.
-                    clusterManagerInstance?.let { cm ->
-                        // Detach listeners from the GoogleMap directly using the map instance that was used to initialize the CM.
-                        // The ClusterManager's internal GoogleMap reference should be the same.
-                        // Note: .map is not a public property, so we are removing the listener directly from the GoogleMap instance.
-                        //cm.map?.setOnCameraIdleListener(null) // This line requires access to cm.map
-                        // cm.map?.setOnMarkerClickListener(null) // This line requires access to cm.map
-
-                        // Clear items. For setMap(null) and setRenderer(null), these are internal to ClusterManager
-                        // and not part of its public cleanup API. Clearing items and detaching listeners is sufficient.
-                        cm.clearItems()
-                        // The following lines are not part of ClusterManager's public API for direct control:
-                        // cm.setMap(null)
-                        // cm.setRenderer(null)
+                    // When the composable is disposed, detach the listeners from the GoogleMap
+                    // to prevent memory leaks and ensure the ClusterManager doesn't try to
+                    // interact with a potentially invalid map instance.
+                    currentGoogleMap?.let { map ->
+                        map.setOnCameraIdleListener(null)
+                        map.setOnMarkerClickListener(null)
                     }
+                    // Clear items from the ClusterManager as well.
+                    clusterManagerInstance?.clearItems()
                 }
             }
 
