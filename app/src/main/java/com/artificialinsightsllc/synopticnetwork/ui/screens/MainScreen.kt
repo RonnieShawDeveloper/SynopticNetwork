@@ -95,7 +95,7 @@ import com.artificialinsightsllc.synopticnetwork.data.models.AlertSeverity
 import com.artificialinsightsllc.synopticnetwork.data.models.Comment
 import com.artificialinsightsllc.synopticnetwork.data.models.MapReport
 import com.artificialinsightsllc.synopticnetwork.data.models.Report
-import com.artificialinsightsllc.synopticnetwork.data.models.ReportClusterItem // Import ReportClusterItem
+// Removed ReportClusterItem import
 import com.artificialinsightsllc.synopticnetwork.navigation.Screen
 import com.artificialinsightsllc.synopticnetwork.ui.theme.SynopticNetworkTheme
 import com.artificialinsightsllc.synopticnetwork.ui.theme.Transparent_Black
@@ -109,13 +109,8 @@ import com.google.android.gms.maps.model.BitmapDescriptor
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
-import com.google.android.gms.maps.model.Marker
-import com.google.android.gms.maps.model.MarkerOptions
-import com.google.maps.android.clustering.Cluster
-import com.google.maps.android.clustering.ClusterManager
-import com.google.maps.android.clustering.view.DefaultClusterRenderer
 import com.google.maps.android.compose.GoogleMap
-import com.google.maps.android.compose.MapEffect // Keep MapEffect for initial map access
+// Removed MapEffect import
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapType
 import com.google.maps.android.compose.MapUiSettings
@@ -141,7 +136,7 @@ fun MainScreen(
     mainViewModel: MainViewModel = viewModel()
 ) {
     val context = LocalContext.current
-    val mapState by mainViewModel.mapState.collectAsState()
+    val mapState by mainViewModel.uiState.collectAsState()
     val scope = rememberCoroutineScope()
     val reportSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val alertsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false) // Allow partial expansion
@@ -172,6 +167,8 @@ fun MainScreen(
     LaunchedEffect(locationPermissionState.status) {
         if (locationPermissionState.status.isGranted) mainViewModel.onMapReady(context)
     }
+
+    // Removed connecting map zoom to ViewModel as dynamic jittering is removed.
 
     LaunchedEffect(mapState.currentLocation) {
         mapState.currentLocation?.let {
@@ -245,13 +242,7 @@ fun MainScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         val markerIconFactory = remember { MarkerIconFactory(context) }
 
-        // Use remember to hold the ClusterManager and its Renderer
-        // These will be initialized once and retained across recompositions.
-        // The ClusterManager itself is tightly coupled with the GoogleMap instance.
-        var clusterManagerInstance: ClusterManager<ReportClusterItem>? by remember { mutableStateOf(null) }
-        // New state to hold a reference to the GoogleMap object for cleanup
-        var currentGoogleMap: GoogleMap? by remember { mutableStateOf(null) }
-
+        // Removed clusterManagerInstance and currentGoogleMap states.
 
         GoogleMap(
             modifier = Modifier.fillMaxSize(),
@@ -259,65 +250,23 @@ fun MainScreen(
             properties = mapState.mapProperties,
             uiSettings = uiSettings
         ) {
-            // MapEffect is for side-effects that need access to the GoogleMap object.
-            // It runs once when the map becomes available and re-runs if `mapState.reports` changes.
-            // Also, `googleMap` is the actual GoogleMap object instance.
-            MapEffect(mapState.reports) { googleMap ->
-                // Capture the current GoogleMap instance for later cleanup
-                currentGoogleMap = googleMap
-
-                if (clusterManagerInstance == null) {
-                    // Initialize ClusterManager and Renderer only once per GoogleMap instance
-                    val newClusterManager = ClusterManager<ReportClusterItem>(context, googleMap)
-                    val newRenderer = ReportMarkerRenderer(context, googleMap, newClusterManager, markerIconFactory)
-                    newClusterManager.renderer = newRenderer
-
-                    // Set listeners for cluster item clicks
-                    newClusterManager.setOnClusterItemClickListener { item ->
-                        mainViewModel.onMarkerClicked(item.report)
-                        scope.launch { reportSheetState.show() }
-                        true
-                    }
-
-                    // Set listener for cluster clicks (e.g., zoom in)
-                    newClusterManager.setOnClusterClickListener { cluster ->
-                        val position = cameraPositionState.position
-                        val newZoom = position.zoom + 2 // Zoom in by 2 levels
-                        val newCameraPosition = CameraPosition.fromLatLngZoom(cluster.position, newZoom)
-                        scope.launch {
-                            cameraPositionState.animate(CameraUpdateFactory.newCameraPosition(newCameraPosition), 500)
+            // Directly iterate over mapState.reports to display individual markers.
+            // Clustering is removed.
+            mapState.reports.forEach { report ->
+                report.location?.let { geoPoint ->
+                    val position = LatLng(geoPoint.latitude, geoPoint.longitude)
+                    val markerState = rememberMarkerState(position = position)
+                    Marker(
+                        state = markerState,
+                        title = report.reportType,
+                        snippet = report.reportType, // Changed from report.comments to report.reportType
+                        icon = markerIconFactory.createMarkerIcon(report),
+                        onClick = {
+                            mainViewModel.onMarkerClicked(report)
+                            scope.launch { reportSheetState.show() }
+                            true
                         }
-                        true
-                    }
-
-                    // Delegate map listeners to the cluster manager
-                    googleMap.setOnCameraIdleListener(newClusterManager)
-                    googleMap.setOnMarkerClickListener(newClusterManager)
-
-                    // Store instance in remembered state
-                    clusterManagerInstance = newClusterManager
-                }
-
-                // Update cluster items whenever mapState.reports changes
-                clusterManagerInstance?.clearItems()
-                clusterManagerInstance?.addItems(mapState.reports)
-                clusterManagerInstance?.cluster() // Trigger clustering immediately after updating items
-            }
-
-            // DisposableEffect for cleaning up ClusterManager resources when this composable leaves composition.
-            // This is correctly placed inside the @Composable scope of MainScreen.
-            // We now observe both the clusterManagerInstance and currentGoogleMap for proper cleanup.
-            DisposableEffect(clusterManagerInstance, currentGoogleMap) {
-                onDispose {
-                    // When the composable is disposed, detach the listeners from the GoogleMap
-                    // to prevent memory leaks and ensure the ClusterManager doesn't try to
-                    // interact with a potentially invalid map instance.
-                    currentGoogleMap?.let { map ->
-                        map.setOnCameraIdleListener(null)
-                        map.setOnMarkerClickListener(null)
-                    }
-                    // Clear items from the ClusterManager as well.
-                    clusterManagerInstance?.clearItems()
+                    )
                 }
             }
 
@@ -399,52 +348,6 @@ fun MainScreen(
                 ActionButtons(navController = navController)
             }
         }
-    }
-}
-
-/**
- * Custom Cluster Renderer for ReportClusterItem.
- * This class is responsible for drawing individual markers and clusters on the map,
- * utilizing the existing MarkerIconFactory for individual report icons.
- */
-class ReportMarkerRenderer(
-    context: Context,
-    map: GoogleMap,
-    clusterManager: ClusterManager<ReportClusterItem>,
-    private val markerIconFactory: MarkerIconFactory
-) : DefaultClusterRenderer<ReportClusterItem>(context, map, clusterManager) {
-
-    // This method is called to render an individual ClusterItem (ReportClusterItem in our case).
-    override fun onBeforeClusterItemRendered(item: ReportClusterItem, markerOptions: MarkerOptions) {
-        // Use our MarkerIconFactory to create the custom icon for the individual report
-        markerIconFactory.createMarkerIcon(item.report)?.let { icon ->
-            markerOptions.icon(icon)
-        }
-        // Set anchor to center-bottom of the icon if the pin is at the bottom center
-        markerOptions.anchor(0.5f, 1.0f)
-        markerOptions.title(item.title)
-        markerOptions.snippet(item.snippet)
-    }
-
-    // This method is called to render a Cluster (a group of markers).
-    override fun onBeforeClusterRendered(cluster: Cluster<ReportClusterItem>, markerOptions: MarkerOptions) {
-        // Here you can customize the appearance of cluster markers (e.g., a circle with the count).
-        // For simplicity, we'll use the default cluster icon which is a tinted circle with the count.
-        // You might want to create a custom drawable for clusters too, similar to MarkerIconFactory.
-        super.onBeforeClusterRendered(cluster, markerOptions)
-    }
-
-    // This method is called after the marker is added to the map.
-    override fun onClusterItemRendered(clusterItem: ReportClusterItem, marker: Marker) {
-        super.onClusterItemRendered(clusterItem, marker)
-        // You can add additional setup here if needed after the marker is placed.
-    }
-
-    // Override shouldRenderAsCluster to control when clustering happens.
-    // Return true to cluster, false to render as individual markers always.
-    override fun shouldRenderAsCluster(cluster: Cluster<ReportClusterItem>): Boolean {
-        // Only cluster if there are more than 1 item in the cluster
-        return cluster.size > 1
     }
 }
 
@@ -681,7 +584,7 @@ private fun AlertDetailsDialog(alert: AlertFeature, onDismiss: () -> Unit) {
             // Use LazyColumn for scrollable content within the dialog if it gets long
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 alert.properties.headline?.let {
-                    Text(it, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Text(it, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(4.dp))
                 }
                 alert.properties.areaDesc?.let {

@@ -10,13 +10,14 @@ import com.artificialinsightsllc.synopticnetwork.data.models.AlertSeverity
 import com.artificialinsightsllc.synopticnetwork.data.models.Comment
 import com.artificialinsightsllc.synopticnetwork.data.models.MapReport
 import com.artificialinsightsllc.synopticnetwork.data.models.Report
-import com.artificialinsightsllc.synopticnetwork.data.models.ReportClusterItem // Import the new ReportClusterItem
+// Removed import for ReportClusterItem as it's no longer used
 import com.artificialinsightsllc.synopticnetwork.data.services.AuthService
 import com.artificialinsightsllc.synopticnetwork.data.services.NwsApiService
 import com.artificialinsightsllc.synopticnetwork.data.services.ReportService
 import com.artificialinsightsllc.synopticnetwork.data.services.UserService
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.maps.model.LatLng
+import com.google.firebase.firestore.GeoPoint
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapType
 import kotlinx.coroutines.Job
@@ -24,6 +25,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+// Removed combine flow import as dynamic jittering is removed
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -34,8 +36,8 @@ data class MapState(
     val isLoading: Boolean = true,
     val currentLocation: LatLng? = null,
     val mapProperties: MapProperties = MapProperties(mapType = MapType.NORMAL),
-    val reports: List<ReportClusterItem> = emptyList(), // Changed to List<ReportClusterItem>
-    val selectedReport: Report? = null, // Still needs full Report for detailed bottom sheet
+    val reports: List<MapReport> = emptyList(), // Changed from List<ReportClusterItem> to List<MapReport>
+    val selectedReport: Report? = null,
     val comments: List<Comment> = emptyList(),
     val isLoadingComments: Boolean = false,
     val currentUserScreenName: String? = null,
@@ -44,6 +46,7 @@ data class MapState(
     val alertsLoading: Boolean = false,
     val highestSeverity: AlertSeverity = AlertSeverity.NONE,
     val radarWfo: String? = null
+    // Removed currentMapZoom and mapMaxZoomLevel as dynamic jittering is no longer needed
 )
 
 // Initialize the filters with all types set to true (visible)
@@ -63,7 +66,9 @@ private val initialFilters: Map<String, Boolean> = mapOf(
 class MainViewModel : ViewModel() {
 
     private val _mapState = MutableStateFlow(MapState())
-    val mapState = _mapState.asStateFlow()
+    val uiState = _mapState.asStateFlow()
+
+    // Removed _rawReports as it's no longer needed for jittering.
 
     private val reportService = ReportService()
     private val authService = AuthService()
@@ -74,8 +79,11 @@ class MainViewModel : ViewModel() {
     private var alertsPollingJob: Job? = null
 
     init {
+        // Now listening directly for MapReports, no intermediate _rawReports needed for jittering.
         listenForMapReports()
         fetchCurrentUser()
+
+        // Removed the combine flow that handled dynamic jittering based on zoom.
     }
 
     private fun fetchCurrentUser() {
@@ -103,19 +111,24 @@ class MainViewModel : ViewModel() {
     }
 
     /**
-     * Listens for real-time updates to reports and converts them to ReportClusterItem.
+     * Listens for real-time updates to reports directly for display.
+     * No jittering applied here.
      */
     private fun listenForMapReports() {
         viewModelScope.launch {
             reportService.listenForMapReports()
                 .catch { e -> e.printStackTrace() }
                 .collect { mapReports ->
-                    // Convert MapReport objects to ReportClusterItem objects for clustering
-                    val clusterItems = mapReports.map { ReportClusterItem(it) }
-                    _mapState.update { it.copy(reports = clusterItems) }
+                    // Directly update the 'reports' list in MapState with MapReport objects.
+                    _mapState.update { currentState ->
+                        currentState.copy(reports = mapReports)
+                    }
                 }
         }
     }
+
+    // Removed onMapZoomChanged and onMapMaxZoomLevelChanged as dynamic jittering is removed.
+
 
     /**
      * Starts a coroutine job to periodically fetch active NWS alerts and radar WFO.
@@ -163,6 +176,7 @@ class MainViewModel : ViewModel() {
         }
         _mapState.update { it.copy(isLoadingComments = true, selectedReport = null) }
         viewModelScope.launch {
+            // report.reportId is always available in MapReport
             val fullReport = reportService.getReportDetails(report.reportId)
             _mapState.update { it.copy(selectedReport = fullReport) }
             commentsListenerJob = launch {
@@ -211,6 +225,8 @@ class MainViewModel : ViewModel() {
             }
             .addOnFailureListener { _mapState.update { it.copy(isLoading = false) } }
     }
+
+    // Removed applyJitterToOverlappingReports function as clustering is removed.
 
     override fun onCleared() {
         super.onCleared()

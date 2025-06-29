@@ -4,11 +4,13 @@ import com.artificialinsightsllc.synopticnetwork.data.models.Comment
 import com.artificialinsightsllc.synopticnetwork.data.models.MapReport
 import com.artificialinsightsllc.synopticnetwork.data.models.Report
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.GeoPoint
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.firestore.ktx.toObject
 import com.google.firebase.firestore.ktx.toObjects
 import com.google.firebase.ktx.Firebase
+import com.google.android.gms.maps.model.LatLng
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -37,7 +39,8 @@ class ReportService {
 
     /**
      * Listens for real-time updates to the 'reports' collection, fetching only the
-     * lightweight data needed for map markers.
+     * lightweight data needed for map markers. This method now provides the raw,
+     * non-jittered MapReport data. Jittering will be applied dynamically in the ViewModel.
      */
     fun listenForMapReports(): Flow<List<MapReport>> {
         return callbackFlow {
@@ -50,6 +53,7 @@ class ReportService {
 
                     if (snapshot != null) {
                         // Map the documents to our lightweight MapReport model
+                        // No jittering applied here; raw data is passed.
                         val reports = snapshot.documents.mapNotNull {
                             it.toObject(MapReport::class.java)?.copy(reportId = it.id)
                         }

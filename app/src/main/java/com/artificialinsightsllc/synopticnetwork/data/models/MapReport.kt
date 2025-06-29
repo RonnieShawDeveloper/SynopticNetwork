@@ -19,3 +19,4 @@ data class MapReport(
     val direction: Float = 0f,
     val reportType: String = ""
 )
+
