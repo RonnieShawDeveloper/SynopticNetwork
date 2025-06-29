@@ -3,6 +3,7 @@ package com.artificialinsightsllc.synopticnetwork.data.services
 import android.util.Log
 import com.artificialinsightsllc.synopticnetwork.BuildConfig
 import com.artificialinsightsllc.synopticnetwork.data.models.GeocodingResponse
+import com.artificialinsightsllc.synopticnetwork.data.models.NwsAlertsResponse // Import the new alerts response model
 import com.artificialinsightsllc.synopticnetwork.data.models.NwsPointResponse
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import kotlinx.serialization.json.Json
@@ -34,6 +35,17 @@ interface NwsApi {
         @Query("address") zipCode: String,
         @Query("key") apiKey: String
     ): GeocodingResponse
+
+    // New endpoint for fetching active NWS alerts
+    @GET("alerts/active")
+    suspend fun getActiveAlerts(
+        @Query("status") status: String = "actual",
+        @Query("message_type") messageType: String = "alert,update,cancel",
+        @Query("point") point: String, // Formatted as "lat,lon"
+        @Query("urgency") urgency: String = "Immediate",
+        @Query("severity") severity: String = "Extreme,Severe,Moderate,Minor,Unknown",
+        @Query("certainty") certainty: String = "Observed,Likely,Possible,Unlikely,Unknown"
+    ): NwsAlertsResponse
 }
 
 /**
@@ -52,8 +64,15 @@ class NwsApiService {
     }
 
     // Create an OkHttpClient and add the logging interceptor.
+    // Also add an Interceptor for the User-Agent header required by NWS for radar images/some data.
     private val httpClient = OkHttpClient.Builder()
         .addInterceptor(loggingInterceptor)
+        .addInterceptor { chain ->
+            val request = chain.request().newBuilder()
+                .header("User-Agent", "SynopticNetwork (rdspromo@gmail.com)") // NWS requires this
+                .build()
+            chain.proceed(request)
+        }
         .build()
 
     // Create a Retrofit instance for the NWS API
@@ -80,7 +99,7 @@ class NwsApiService {
         Log.i(TAG, "Fetching NWS point data for lat: $latitude, lon: $longitude")
         return try {
             val response = nwsApi.getPointData(latitude, longitude)
-            Log.d(TAG, "NWS API Response: $response")
+            Log.d(TAG, "NWS API Point Data Response: $response")
             response
         } catch (e: Exception) {
             Log.e(TAG, "Error fetching NWS point data", e)
@@ -111,6 +130,53 @@ class NwsApiService {
             response
         } catch (e: Exception) {
             Log.e(TAG, "Error fetching coordinates from zip code", e)
+            null
+        }
+    }
+
+    /**
+     * Fetches active NWS alerts for a given geographical point.
+     *
+     * @param latitude The latitude of the point.
+     * @param longitude The longitude of the point.
+     * @return An [NwsAlertsResponse] object containing active alerts, or null on error.
+     */
+    suspend fun getActiveAlerts(latitude: Double, longitude: Double): NwsAlertsResponse? {
+        val pointString = "$latitude,$longitude"
+        Log.i(TAG, "Fetching active alerts for point: $pointString")
+        return try {
+            val response = nwsApi.getActiveAlerts(point = pointString)
+            Log.d(TAG, "NWS Active Alerts Response: $response")
+            response
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching active alerts for point $pointString", e)
+            null
+        }
+    }
+
+    /**
+     * Fetches the 4-letter WFO (Weather Forecast Office) identifier for a given location,
+     * prepending "K" as required for radar image URLs.
+     *
+     * @param latitude The latitude of the point.
+     * @param longitude The longitude of the point.
+     * @return The 4-letter WFO identifier (e.g., "KTBW"), or null if not found.
+     */
+    suspend fun getRadarWfo(latitude: Double, longitude: Double): String? {
+        Log.i(TAG, "Fetching WFO for radar for lat: $latitude, lon: $longitude")
+        return try {
+            val pointData = nwsApi.getPointData(latitude, longitude)
+            val gridId = pointData.properties?.gridId
+            if (gridId != null) {
+                val radarWfo = "K$gridId"
+                Log.d(TAG, "Found Radar WFO: $radarWfo")
+                radarWfo
+            } else {
+                Log.w(TAG, "Grid ID (WFO) not found for lat: $latitude, lon: $longitude")
+                null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching WFO for radar for lat: $latitude, lon: $longitude", e)
             null
         }
     }

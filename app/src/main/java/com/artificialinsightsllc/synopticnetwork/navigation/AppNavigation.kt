@@ -20,6 +20,7 @@ import com.artificialinsightsllc.synopticnetwork.ui.screens.MainScreen
 import com.artificialinsightsllc.synopticnetwork.ui.screens.MakeReportScreen
 import com.artificialinsightsllc.synopticnetwork.ui.screens.SignUpScreen
 import com.artificialinsightsllc.synopticnetwork.ui.screens.SplashScreen
+import com.artificialinsightsllc.synopticnetwork.ui.screens.SettingsScreen // Import the new SettingsScreen
 import com.artificialinsightsllc.synopticnetwork.ui.viewmodels.MakeReportViewModel
 
 /**
@@ -34,6 +35,7 @@ sealed class Screen(val route: String) {
     object Main : Screen("main_screen")
     object MakeReport : Screen("make_report_screen")
     object Camera : Screen("camera_screen")
+    object Settings : Screen("settings_screen") // New route for SettingsScreen
 }
 
 /**
@@ -121,6 +123,17 @@ fun AppNavigation() {
             }
             val parentViewModel: MakeReportViewModel = viewModel(parentEntry as ViewModelStoreOwner)
             CameraScreen(navController = navController, viewModel = parentViewModel)
+        }
+
+        // Settings Screen Route - Slides in from the right (consistent with new screens)
+        composable(
+            route = Screen.Settings.route,
+            enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(animationDuration)) },
+            exitTransition = { slideOutHorizontally(targetOffsetX = { -it }, animationSpec = tween(animationDuration)) },
+            popEnterTransition = { slideInHorizontally(initialOffsetX = { -it }, animationSpec = tween(animationDuration)) },
+            popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(animationDuration)) }
+        ) {
+            SettingsScreen(navController = navController)
         }
     }
 }

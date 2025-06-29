@@ -21,7 +21,7 @@ sealed class AuthResult {
  */
 class AuthService {
 
-    private val firebaseAuth: FirebaseAuth = Firebase.auth
+    internal val firebaseAuth: FirebaseAuth = Firebase.auth
 
     /**
      * Creates a new user with email and password in Firebase Authentication.

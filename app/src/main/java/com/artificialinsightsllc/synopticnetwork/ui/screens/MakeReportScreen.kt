@@ -28,6 +28,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import coil.compose.rememberAsyncImagePainter
+import com.artificialinsightsllc.synopticnetwork.data.models.getReportTypesWithEmojis
 import com.artificialinsightsllc.synopticnetwork.navigation.Screen
 import com.artificialinsightsllc.synopticnetwork.ui.theme.SynopticNetworkTheme
 import com.artificialinsightsllc.synopticnetwork.ui.viewmodels.MakeReportViewModel
@@ -150,10 +151,9 @@ fun ReportForm(
     viewModel: MakeReportViewModel,
     enabled: Boolean
 ) {
-    val reportTypes = listOf(
-        "Tornado", "Funnel Cloud", "Wall Cloud", "Wind Damage",
-        "Hail", "Flooding", "Severe Weather", "Other"
-    )
+    // Get the full list of report types from the same source as the MainScreen legend.
+    // We only need the names (first element of the pair).
+    val reportTypes = getReportTypesWithEmojis().map { it.first }
     var expanded by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -241,3 +241,4 @@ fun MakeReportScreenPreview() {
         MakeReportScreen(navController = rememberNavController())
     }
 }
+

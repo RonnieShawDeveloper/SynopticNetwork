@@ -5,10 +5,14 @@ import android.content.Context
 import android.location.Location
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.artificialinsightsllc.synopticnetwork.data.models.AlertFeature
+import com.artificialinsightsllc.synopticnetwork.data.models.AlertSeverity
 import com.artificialinsightsllc.synopticnetwork.data.models.Comment
 import com.artificialinsightsllc.synopticnetwork.data.models.MapReport
 import com.artificialinsightsllc.synopticnetwork.data.models.Report
+import com.artificialinsightsllc.synopticnetwork.data.models.ReportClusterItem // Import the new ReportClusterItem
 import com.artificialinsightsllc.synopticnetwork.data.services.AuthService
+import com.artificialinsightsllc.synopticnetwork.data.services.NwsApiService
 import com.artificialinsightsllc.synopticnetwork.data.services.ReportService
 import com.artificialinsightsllc.synopticnetwork.data.services.UserService
 import com.google.android.gms.location.LocationServices
@@ -16,6 +20,7 @@ import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapType
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
@@ -23,18 +28,22 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * Data class to hold the entire state of the map screen.
+ * Data class to hold the entire state of the map screen, including alert data.
  */
 data class MapState(
     val isLoading: Boolean = true,
     val currentLocation: LatLng? = null,
     val mapProperties: MapProperties = MapProperties(mapType = MapType.NORMAL),
-    val reports: List<MapReport> = emptyList(),
-    val selectedReport: Report? = null,
+    val reports: List<ReportClusterItem> = emptyList(), // Changed to List<ReportClusterItem>
+    val selectedReport: Report? = null, // Still needs full Report for detailed bottom sheet
     val comments: List<Comment> = emptyList(),
     val isLoadingComments: Boolean = false,
     val currentUserScreenName: String? = null,
-    val reportTypeFilters: Map<String, Boolean> = initialFilters
+    val reportTypeFilters: Map<String, Boolean> = initialFilters,
+    val activeAlerts: List<AlertFeature> = emptyList(),
+    val alertsLoading: Boolean = false,
+    val highestSeverity: AlertSeverity = AlertSeverity.NONE,
+    val radarWfo: String? = null
 )
 
 // Initialize the filters with all types set to true (visible)
@@ -59,8 +68,10 @@ class MainViewModel : ViewModel() {
     private val reportService = ReportService()
     private val authService = AuthService()
     private val userService = UserService()
+    private val nwsApiService = NwsApiService()
 
     private var commentsListenerJob: Job? = null
+    private var alertsPollingJob: Job? = null
 
     init {
         listenForMapReports()
@@ -77,21 +88,70 @@ class MainViewModel : ViewModel() {
         }
     }
 
+    /**
+     * Called when the map is ready and location permissions are granted.
+     * Fetches current location and starts alert polling.
+     */
     fun onMapReady(context: Context) {
         viewModelScope.launch {
             getCurrentLocation(context) { location ->
                 _mapState.update { it.copy(currentLocation = location, isLoading = false) }
+                // Start polling for alerts once we have a location
+                startAlertsPolling(location)
             }
         }
     }
 
+    /**
+     * Listens for real-time updates to reports and converts them to ReportClusterItem.
+     */
     private fun listenForMapReports() {
         viewModelScope.launch {
             reportService.listenForMapReports()
                 .catch { e -> e.printStackTrace() }
-                .collect { reports ->
-                    _mapState.update { it.copy(reports = reports) }
+                .collect { mapReports ->
+                    // Convert MapReport objects to ReportClusterItem objects for clustering
+                    val clusterItems = mapReports.map { ReportClusterItem(it) }
+                    _mapState.update { it.copy(reports = clusterItems) }
                 }
+        }
+    }
+
+    /**
+     * Starts a coroutine job to periodically fetch active NWS alerts and radar WFO.
+     */
+    private fun startAlertsPolling(location: LatLng) {
+        alertsPollingJob?.cancel() // Cancel any existing polling job
+        alertsPollingJob = viewModelScope.launch {
+            while (true) {
+                _mapState.update { it.copy(alertsLoading = true) }
+                try {
+                    // Fetch active alerts
+                    val alertsResponse = nwsApiService.getActiveAlerts(location.latitude, location.longitude)
+                    val activeAlerts = alertsResponse?.features ?: emptyList()
+
+                    // Determine the highest severity
+                    val highestSeverity = activeAlerts.maxOfOrNull {
+                        AlertSeverity.fromString(it.properties.severity)
+                    } ?: AlertSeverity.NONE
+
+                    // Fetch radar WFO
+                    val radarWfo = nwsApiService.getRadarWfo(location.latitude, location.longitude)
+
+                    _mapState.update {
+                        it.copy(
+                            activeAlerts = activeAlerts,
+                            highestSeverity = highestSeverity,
+                            radarWfo = radarWfo,
+                            alertsLoading = false
+                        )
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    _mapState.update { it.copy(alertsLoading = false) }
+                }
+                delay(60 * 1000L) // Poll every minute (60 seconds)
+            }
         }
     }
 
@@ -150,5 +210,11 @@ class MainViewModel : ViewModel() {
                     ?: run { _mapState.update { it.copy(isLoading = false) } }
             }
             .addOnFailureListener { _mapState.update { it.copy(isLoading = false) } }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        alertsPollingJob?.cancel()
+        commentsListenerJob?.cancel()
     }
 }
