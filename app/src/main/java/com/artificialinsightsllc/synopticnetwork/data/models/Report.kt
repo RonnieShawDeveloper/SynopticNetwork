@@ -19,6 +19,8 @@ import java.util.Date
  * @param phoneNumber The user's phone number (optional, for NWS callback).
  * @param wfo The NWS Weather Forecast Office ID for the report's location (e.g., "TBW").
  * @param zone The NWS forecast zone ID for the report's location (e.g., "FLZ151").
+ * @param geohash The Geohash of the report's location for spatial indexing (7-character precision).
+ * @param geohash3Char The Geohash of the report's location for broad area loading (3-character precision).
  * @param timestamp The time the report was created, automatically set by the server.
  */
 data class Report(
@@ -30,11 +32,12 @@ data class Report(
     val reportType: String = "",
     val comments: String? = null,
     val sendToNws: Boolean = false,
-    val nwsAcknowledged: Boolean = false, // New field
+    val nwsAcknowledged: Boolean = false,
     val phoneNumber: String? = null,
     val wfo: String? = null,
     val zone: String? = null,
+    val geohash: String = "",
+    val geohash3Char: String = "", // NEW: Added for 3-character precision loading
     @ServerTimestamp
     val timestamp: Date? = null
 )
-

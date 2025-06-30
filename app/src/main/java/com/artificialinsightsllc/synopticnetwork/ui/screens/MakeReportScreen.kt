@@ -75,11 +75,11 @@ fun MakeReportScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
-                .padding(16.dp)
-                .verticalScroll(rememberScrollState())
-                // This makes sure the view adjusts when the keyboard is open
-                .imePadding(),
+                .padding(paddingValues) // Apply Scaffold's default padding (e.g., for TopAppBar)
+                .navigationBarsPadding() // Adjust for system navigation bars (bottom)
+                .imePadding() // Adjust for keyboard (Input Method Editor)
+                .verticalScroll(rememberScrollState()) // Enable scrolling for content
+                .padding(horizontal = 16.dp, vertical = 16.dp), // Apply symmetrical padding inside the scrollable area
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -241,4 +241,3 @@ fun MakeReportScreenPreview() {
         MakeReportScreen(navController = rememberNavController())
     }
 }
-

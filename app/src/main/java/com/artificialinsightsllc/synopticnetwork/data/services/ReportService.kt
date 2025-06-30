@@ -39,12 +39,22 @@ class ReportService {
 
     /**
      * Listens for real-time updates to the 'reports' collection, fetching only the
-     * lightweight data needed for map markers. This method now provides the raw,
-     * non-jittered MapReport data. Jittering will be applied dynamically in the ViewModel.
+     * lightweight data needed for map markers. This method now allows filtering by a
+     * 3-character Geohash to load reports relevant to the user's general area.
+     *
+     * @param geohash3Char The 3-character Geohash to filter reports by. If empty or null,
+     * it will attempt to fetch all reports (though this is not recommended
+     * for production with large datasets without further pagination).
      */
-    fun listenForMapReports(): Flow<List<MapReport>> {
+    fun listenForMapReports(geohash3Char: String?): Flow<List<MapReport>> {
         return callbackFlow {
-            val listenerRegistration = reportsCollection
+            val query = if (!geohash3Char.isNullOrBlank()) {
+                reportsCollection.whereEqualTo("geohash3Char", geohash3Char)
+            } else {
+                reportsCollection // Fallback to fetching all if no geohash is provided
+            }
+
+            val listenerRegistration = query
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) {
                         close(error)
@@ -52,8 +62,6 @@ class ReportService {
                     }
 
                     if (snapshot != null) {
-                        // Map the documents to our lightweight MapReport model
-                        // No jittering applied here; raw data is passed.
                         val reports = snapshot.documents.mapNotNull {
                             it.toObject(MapReport::class.java)?.copy(reportId = it.id)
                         }

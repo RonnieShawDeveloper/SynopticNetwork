@@ -10,7 +10,6 @@ import com.artificialinsightsllc.synopticnetwork.data.models.AlertSeverity
 import com.artificialinsightsllc.synopticnetwork.data.models.Comment
 import com.artificialinsightsllc.synopticnetwork.data.models.MapReport
 import com.artificialinsightsllc.synopticnetwork.data.models.Report
-// Removed import for ReportClusterItem as it's no longer used
 import com.artificialinsightsllc.synopticnetwork.data.services.AuthService
 import com.artificialinsightsllc.synopticnetwork.data.services.NwsApiService
 import com.artificialinsightsllc.synopticnetwork.data.services.ReportService
@@ -25,9 +24,31 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
-// Removed combine flow import as dynamic jittering is removed
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
+import ch.hsr.geohash.GeoHash // Import GeoHash
+import com.artificialinsightsllc.synopticnetwork.BuildConfig // Import BuildConfig for API key
+
+
+// Define minimum and maximum zoom levels for our custom behavior
+private const val MIN_SPREAD_ZOOM = 16f
+private const val MAX_SPREAD_ZOOM = 18f
+private const val GEOHASH_PRECISION_FOR_GROUPING = 7 // Street-level precision (35 bits)
+private const val GEOHASH_PRECISION_FOR_AREA_LOADING = 3 // Area-level precision (15 bits)
+
+
+// Sealed class to represent different types of markers displayed on the map
+sealed class DisplayMarker {
+    // Represents an individual report marker, with an optional groupCenterLatLng if it was spread
+    data class IndividualReport(val report: MapReport, val displayLatLng: LatLng, val groupCenterLatLng: LatLng? = null) : DisplayMarker()
+    // Represents a group of reports at a specific geohash location
+    data class GroupMarker(val geohash: String, val count: Int, val centerLatLng: LatLng) : DisplayMarker()
+    // Represents the central marker for a spread group
+    data class SpreadCenter(val centerLatLng: LatLng, val geohash: String) : DisplayMarker()
+}
 
 /**
  * Data class to hold the entire state of the map screen, including alert data.
@@ -36,8 +57,10 @@ data class MapState(
     val isLoading: Boolean = true,
     val currentLocation: LatLng? = null,
     val mapProperties: MapProperties = MapProperties(mapType = MapType.NORMAL),
-    val reports: List<MapReport> = emptyList(), // Changed from List<ReportClusterItem> to List<MapReport>
-    val selectedReport: Report? = null,
+    val rawReports: List<MapReport> = emptyList(), // Store the raw, unfiltered reports from Firestore
+    val displayedMarkers: List<DisplayMarker> = emptyList(), // The list of markers actually shown on map
+    val selectedReport: Report? = null, // Used for the individual report bottom sheet
+    val selectedGroupedFullReports: List<Report> = emptyList(), // NEW: Used for the grouped reports dialog
     val comments: List<Comment> = emptyList(),
     val isLoadingComments: Boolean = false,
     val currentUserScreenName: String? = null,
@@ -45,8 +68,9 @@ data class MapState(
     val activeAlerts: List<AlertFeature> = emptyList(),
     val alertsLoading: Boolean = false,
     val highestSeverity: AlertSeverity = AlertSeverity.NONE,
-    val radarWfo: String? = null
-    // Removed currentMapZoom and mapMaxZoomLevel as dynamic jittering is no longer needed
+    val radarWfo: String? = null,
+    val currentMapZoom: Float = 10f,
+    val userGeohash3Char: String? = null // NEW: User's 3-char geohash for local report loading
 )
 
 // Initialize the filters with all types set to true (visible)
@@ -68,8 +92,6 @@ class MainViewModel : ViewModel() {
     private val _mapState = MutableStateFlow(MapState())
     val uiState = _mapState.asStateFlow()
 
-    // Removed _rawReports as it's no longer needed for jittering.
-
     private val reportService = ReportService()
     private val authService = AuthService()
     private val userService = UserService()
@@ -77,24 +99,30 @@ class MainViewModel : ViewModel() {
 
     private var commentsListenerJob: Job? = null
     private var alertsPollingJob: Job? = null
+    private var reportsListenerJob: Job? = null // NEW: To manage the reports listener
 
     init {
-        // Now listening directly for MapReports, no intermediate _rawReports needed for jittering.
-        listenForMapReports()
-        fetchCurrentUser()
-
-        // Removed the combine flow that handled dynamic jittering based on zoom.
+        // Fetch user profile (only screen name for now)
+        fetchCurrentUserProfile()
+        // The reports listener will be started once currentLocation is available via onMapReady
     }
 
-    private fun fetchCurrentUser() {
+    private fun fetchCurrentUserProfile() {
         viewModelScope.launch {
             val userId = authService.getCurrentUserId()
             if (userId != null) {
                 val user = userService.getUserProfile(userId)
-                _mapState.update { it.copy(currentUserScreenName = user?.screenName) }
+                _mapState.update {
+                    it.copy(
+                        currentUserScreenName = user?.screenName
+                    )
+                }
+            } else {
+                _mapState.update { it.copy(isLoading = false) } // Ensure loading state is false if no user
             }
         }
     }
+
 
     /**
      * Called when the map is ready and location permissions are granted.
@@ -103,7 +131,13 @@ class MainViewModel : ViewModel() {
     fun onMapReady(context: Context) {
         viewModelScope.launch {
             getCurrentLocation(context) { location ->
-                _mapState.update { it.copy(currentLocation = location, isLoading = false) }
+                // Calculate 3-char geohash from current location
+                val userGeohash3Char = GeoHash.withBitPrecision(location.latitude, location.longitude, GEOHASH_PRECISION_FOR_AREA_LOADING * 5).toBase32()
+
+                _mapState.update { it.copy(currentLocation = location, isLoading = false, currentMapZoom = 10f, userGeohash3Char = userGeohash3Char) }
+
+                // Start listening for reports based on current location's geohash
+                listenForMapReports(userGeohash3Char)
                 // Start polling for alerts once we have a location
                 startAlertsPolling(location)
             }
@@ -111,23 +145,173 @@ class MainViewModel : ViewModel() {
     }
 
     /**
-     * Listens for real-time updates to reports directly for display.
-     * No jittering applied here.
+     * Listens for real-time updates to reports, filtered by the user's 3-char Geohash.
      */
-    private fun listenForMapReports() {
-        viewModelScope.launch {
-            reportService.listenForMapReports()
+    private fun listenForMapReports(geohash3Char: String?) {
+        reportsListenerJob?.cancel() // Cancel any existing listener
+        reportsListenerJob = viewModelScope.launch {
+            reportService.listenForMapReports(geohash3Char)
                 .catch { e -> e.printStackTrace() }
                 .collect { mapReports ->
-                    // Directly update the 'reports' list in MapState with MapReport objects.
                     _mapState.update { currentState ->
-                        currentState.copy(reports = mapReports)
+                        currentState.copy(rawReports = mapReports)
                     }
+                    // Trigger update of displayed markers whenever raw reports change
+                    updateDisplayedMarkers()
                 }
         }
     }
 
-    // Removed onMapZoomChanged and onMapMaxZoomLevelChanged as dynamic jittering is removed.
+
+    /**
+     * Called when the map's zoom level changes.
+     * This will trigger re-evaluation of marker positions for spreading/grouping.
+     */
+    fun onMapZoomChanged(newZoom: Float) {
+        // Only update if the zoom level has actually changed to avoid unnecessary re-renders
+        if (_mapState.value.currentMapZoom != newZoom) {
+            _mapState.update { it.copy(currentMapZoom = newZoom) }
+            // Trigger update of displayed markers whenever zoom changes
+            updateDisplayedMarkers()
+        }
+    }
+
+    /**
+     * Orchestrates the grouping and spreading logic based on the current zoom level
+     * and updates the `displayedMarkers` in `MapState`.
+     */
+    private fun updateDisplayedMarkers() {
+        _mapState.update { currentState ->
+            val processedMarkers = groupAndSpreadReports(currentState.rawReports, currentState.currentMapZoom)
+            currentState.copy(displayedMarkers = processedMarkers)
+        }
+    }
+
+    /**
+     * Groups and/or spreads reports based on the current zoom level and Geohash.
+     * This is the core logic for managing marker density.
+     */
+    private fun groupAndSpreadReports(
+        reports: List<MapReport>,
+        zoom: Float
+    ): List<DisplayMarker> {
+        // Filter reports based on the user's selected report type filters
+        val filteredReports = reports.filter { report ->
+            uiState.value.reportTypeFilters[report.reportType] ?: true // Default to true if filter not set
+        }
+
+        // Group by Geohash to manage proximity
+        val reportsByGeohash = filteredReports.groupBy { it.geohash }
+
+        val displayedMarkers = mutableListOf<DisplayMarker>()
+
+        // Logic based on zoom level:
+        when {
+            // High zoom: Spread out markers that share the same Geohash
+            zoom >= MIN_SPREAD_ZOOM -> {
+                reportsByGeohash.forEach { (geohash, geohashReports) ->
+                    if (geohashReports.size > 1) {
+                        // More than one report in this Geohash, apply spreading algorithm
+                        val centerLatLng = calculateCenter(geohashReports)
+                        // Corrected: Only call spreadMarkersAroundCenter if centerLatLng is not null
+                        if (centerLatLng != null) {
+                            val spreadReports = spreadMarkersAroundCenter(geohashReports, centerLatLng)
+
+                            // Add the central marker for this group
+                            displayedMarkers.add(DisplayMarker.SpreadCenter(centerLatLng, geohash))
+
+                            // Add individual spread reports, linking them to their center
+                            displayedMarkers.addAll(spreadReports.map {
+                                DisplayMarker.IndividualReport(it, it.location!!.toLatLng(), centerLatLng)
+                            })
+                        } else {
+                            // Fallback: if centerLatLng is null (e.g., no valid locations), display individual reports
+                            geohashReports.forEach { report ->
+                                report.location?.toLatLng()?.let { latLng ->
+                                    displayedMarkers.add(DisplayMarker.IndividualReport(report, latLng, null))
+                                }
+                            }
+                        }
+                    } else {
+                        // Only one report in this Geohash, display as is
+                        geohashReports.first().let { report ->
+                            report.location?.toLatLng()?.let { latLng ->
+                                displayedMarkers.add(DisplayMarker.IndividualReport(report, latLng, null)) // No group center
+                            }
+                        }
+                    }
+                }
+            }
+            // Low zoom: Group markers by Geohash
+            zoom < MIN_SPREAD_ZOOM -> {
+                reportsByGeohash.forEach { (geohash, geohashReports) ->
+                    val centerLatLng = calculateCenter(geohashReports)
+                    if (centerLatLng != null) {
+                        displayedMarkers.add(
+                            DisplayMarker.GroupMarker(
+                                geohash = geohash,
+                                count = geohashReports.size,
+                                centerLatLng = centerLatLng
+                            )
+                        )
+                    }
+                }
+            }
+        }
+        return displayedMarkers
+    }
+
+    /**
+     * Calculates the geometric center of a list of MapReports.
+     */
+    private fun calculateCenter(reports: List<MapReport>): LatLng? {
+        if (reports.isEmpty()) return null
+        var sumLat = 0.0
+        var sumLon = 0.0
+        var validCount = 0
+        reports.forEach { report ->
+            report.location?.let {
+                sumLat += it.latitude
+                sumLon += it.longitude
+                validCount++
+            }
+        }
+        return if (validCount > 0) LatLng(sumLat / validCount, sumLon / validCount) else null
+    }
+
+    /**
+     * Converts GeoPoint to LatLng. This helper might already exist, but adding it here for clarity.
+     */
+    private fun GeoPoint.toLatLng(): LatLng {
+        return LatLng(this.latitude, this.longitude)
+    }
+
+    /**
+     * Calculates new LatLng positions to spread out a list of reports around their geometric center.
+     * This uses a simple circular spreading algorithm.
+     */
+    private fun spreadMarkersAroundCenter(reports: List<MapReport>, centerLatLon: LatLng): List<MapReport> {
+        if (reports.isEmpty()) return emptyList()
+        if (reports.size == 1) return reports // No need to spread a single marker
+
+        val spreadReports = mutableListOf<MapReport>()
+        val baseRadiusDegrees = 0.0005 // A small degree offset (approx 50m at equator), adjust as needed
+        val angleIncrement = 360.0 / reports.size
+
+        reports.forEachIndexed { index, report ->
+            val angleRad = Math.toRadians(index * angleIncrement)
+            // Calculate offset based on current marker count to make sure radius is dynamic
+            val currentRadius = baseRadiusDegrees * (1 + (reports.size * 0.1).toFloat()) // Slight increase with more markers
+
+            // Simple trig to find new lat/lon
+            val newLat = centerLatLon.latitude + currentRadius * sin(angleRad)
+            val newLon = centerLatLon.longitude + currentRadius * cos(angleRad)
+
+            // Create a new MapReport with the adjusted location (GeoPoint)
+            report.copy(location = GeoPoint(newLat, newLon)).also { spreadReports.add(it) }
+        }
+        return spreadReports
+    }
 
 
     /**
@@ -168,7 +352,10 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    fun onMarkerClicked(report: MapReport?) {
+    /**
+     * Handles a click on an individual report marker.
+     */
+    fun onMarkerClicked(report: MapReport?) { // Keep this taking MapReport for direct marker clicks
         commentsListenerJob?.cancel()
         if (report == null) {
             _mapState.update { it.copy(selectedReport = null, comments = emptyList()) }
@@ -176,7 +363,6 @@ class MainViewModel : ViewModel() {
         }
         _mapState.update { it.copy(isLoadingComments = true, selectedReport = null) }
         viewModelScope.launch {
-            // report.reportId is always available in MapReport
             val fullReport = reportService.getReportDetails(report.reportId)
             _mapState.update { it.copy(selectedReport = fullReport) }
             commentsListenerJob = launch {
@@ -188,6 +374,24 @@ class MainViewModel : ViewModel() {
             }
         }
     }
+
+    /**
+     * Handles a click on a group marker. Fetches all reports belonging to that geohash
+     * and provides them via a callback after fetching their full details.
+     */
+    fun onGroupMarkerClicked(geohash: String) {
+        viewModelScope.launch {
+            // Clear previous grouped reports instantly for better UX
+            _mapState.update { it.copy(selectedGroupedFullReports = emptyList()) }
+
+            val reportsInGroupMapReports = _mapState.value.rawReports.filter { it.geohash == geohash }
+            val fullReports = reportsInGroupMapReports.mapNotNull { mapReport ->
+                reportService.getReportDetails(mapReport.reportId)
+            }
+            _mapState.update { it.copy(selectedGroupedFullReports = fullReports) }
+        }
+    }
+
 
     fun addComment(reportId: String, commentText: String) {
         viewModelScope.launch {
@@ -209,6 +413,8 @@ class MainViewModel : ViewModel() {
             updatedFilters[reportType] = isVisible
             state.copy(reportTypeFilters = updatedFilters)
         }
+        // Re-process markers when filters change
+        updateDisplayedMarkers()
     }
 
     fun onMapTypeChanged(mapType: MapType) {
@@ -226,11 +432,10 @@ class MainViewModel : ViewModel() {
             .addOnFailureListener { _mapState.update { it.copy(isLoading = false) } }
     }
 
-    // Removed applyJitterToOverlappingReports function as clustering is removed.
-
     override fun onCleared() {
         super.onCleared()
         alertsPollingJob?.cancel()
         commentsListenerJob?.cancel()
+        reportsListenerJob?.cancel() // NEW: Cancel reports listener
     }
 }

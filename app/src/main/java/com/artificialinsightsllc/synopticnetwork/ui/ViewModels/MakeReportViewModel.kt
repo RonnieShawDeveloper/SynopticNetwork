@@ -8,10 +8,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
 import android.net.Uri
 import android.os.Looper
 import androidx.lifecycle.AndroidViewModel
@@ -37,6 +33,13 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+
+// Add the GeoHash import here
+import ch.hsr.geohash.GeoHash
 
 /**
  * Data class to hold all the state for the report creation screen.
@@ -198,6 +201,12 @@ class MakeReportViewModel(application: Application) : AndroidViewModel(applicati
                 return@launch
             }
 
+            // Calculate Geohash with 7-digit precision
+            val geohash = GeoHash.withBitPrecision(location.latitude, location.longitude, 35).toBase32()
+            // NEW: Calculate Geohash with 3-character precision
+            val geohash3Char = GeoHash.withBitPrecision(location.latitude, location.longitude, 15).toBase32()
+
+
             // 3. Create Report object
             val report = Report(
                 userId = userId,
@@ -209,7 +218,9 @@ class MakeReportViewModel(application: Application) : AndroidViewModel(applicati
                 sendToNws = state.sendToNws,
                 phoneNumber = state.phoneNumber.takeIf { it.isNotBlank() },
                 wfo = wfo,
-                zone = zone
+                zone = zone,
+                geohash = geohash, // Assign the 7-character geohash
+                geohash3Char = geohash3Char // NEW: Assign the 3-character geohash
             )
 
             // 4. Save report to Firestore

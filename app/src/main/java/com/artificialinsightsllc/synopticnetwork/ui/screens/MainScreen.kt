@@ -9,6 +9,7 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -95,11 +96,11 @@ import com.artificialinsightsllc.synopticnetwork.data.models.AlertSeverity
 import com.artificialinsightsllc.synopticnetwork.data.models.Comment
 import com.artificialinsightsllc.synopticnetwork.data.models.MapReport
 import com.artificialinsightsllc.synopticnetwork.data.models.Report
-// Removed ReportClusterItem import
 import com.artificialinsightsllc.synopticnetwork.navigation.Screen
 import com.artificialinsightsllc.synopticnetwork.ui.theme.SynopticNetworkTheme
 import com.artificialinsightsllc.synopticnetwork.ui.theme.Transparent_Black
 import com.artificialinsightsllc.synopticnetwork.ui.viewmodels.MainViewModel
+import com.artificialinsightsllc.synopticnetwork.ui.viewmodels.DisplayMarker // Import DisplayMarker
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
@@ -107,10 +108,8 @@ import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.model.BitmapDescriptor
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
-import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.GoogleMap
-// Removed MapEffect import
 import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.MapType
 import com.google.maps.android.compose.MapUiSettings
@@ -124,6 +123,9 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import com.artificialinsightsllc.synopticnetwork.data.models.getReportTypesWithEmojis
+import com.google.maps.android.compose.Polyline // Import Polyline for drawing lines
+import androidx.compose.ui.geometry.Offset // Import Offset for marker anchor
+import com.google.android.gms.maps.model.CameraPosition
 
 
 /**
@@ -145,6 +147,10 @@ fun MainScreen(
     var showLegendSheet by remember { mutableStateOf(false) }
     var showAlertsSheet by remember { mutableStateOf(false) } // State to control alerts bottom sheet visibility
     var selectedAlertForDialog by remember { mutableStateOf<AlertFeature?>(null) } // New state for dialog alert
+
+    // Removed local `selectedGroupedReports` state, as it will now be sourced from ViewModel
+    var showGroupedReportsDialog by remember { mutableStateOf(false) }
+
 
     val defaultLocation = LatLng(28.3486, -82.6826)
 
@@ -168,13 +174,26 @@ fun MainScreen(
         if (locationPermissionState.status.isGranted) mainViewModel.onMapReady(context)
     }
 
-    // Removed connecting map zoom to ViewModel as dynamic jittering is removed.
+    // Connect map zoom to ViewModel
+    LaunchedEffect(cameraPositionState.position.zoom) {
+        mainViewModel.onMapZoomChanged(cameraPositionState.position.zoom)
+    }
 
     LaunchedEffect(mapState.currentLocation) {
         mapState.currentLocation?.let {
             cameraPositionState.animate(CameraUpdateFactory.newCameraPosition(CameraPosition(it, 10f, 0f, 0f)), 1000)
         }
     }
+
+    // Observe selectedGroupedFullReports from ViewModel to trigger dialog visibility
+    LaunchedEffect(mapState.selectedGroupedFullReports) {
+        if (mapState.selectedGroupedFullReports.isNotEmpty()) {
+            showGroupedReportsDialog = true
+        } else {
+            showGroupedReportsDialog = false
+        }
+    }
+
 
     // Show the Report Details Bottom Sheet
     if (mapState.selectedReport != null) {
@@ -228,6 +247,22 @@ fun MainScreen(
         )
     }
 
+    // Show Grouped Reports Dialog when a group marker is clicked
+    if (showGroupedReportsDialog && mapState.selectedGroupedFullReports.isNotEmpty()) {
+        GroupedReportsDialog(
+            reports = mapState.selectedGroupedFullReports, // Use the reports from ViewModel state
+            onDismiss = {
+                showGroupedReportsDialog = false
+                mainViewModel.onGroupMarkerClicked("") // Clear the selected grouped reports in ViewModel
+            },
+            onReportSelected = { report ->
+                mainViewModel.onMarkerClicked(report.toMapReport()) // Pass MapReport for consistency, or adjust onMarkerClicked
+                showGroupedReportsDialog = false // Dismiss group dialog
+                mainViewModel.onGroupMarkerClicked("") // Clear selected grouped reports after selection
+                scope.launch { reportSheetState.show() }
+            }
+        )
+    }
 
     if (showAddCommentDialog) {
         AddCommentDialog(
@@ -242,34 +277,68 @@ fun MainScreen(
     Box(modifier = Modifier.fillMaxSize()) {
         val markerIconFactory = remember { MarkerIconFactory(context) }
 
-        // Removed clusterManagerInstance and currentGoogleMap states.
-
         GoogleMap(
             modifier = Modifier.fillMaxSize(),
             cameraPositionState = cameraPositionState,
             properties = mapState.mapProperties,
             uiSettings = uiSettings
         ) {
-            // Directly iterate over mapState.reports to display individual markers.
-            // Clustering is removed.
-            mapState.reports.forEach { report ->
-                report.location?.let { geoPoint ->
-                    val position = LatLng(geoPoint.latitude, geoPoint.longitude)
-                    val markerState = rememberMarkerState(position = position)
-                    Marker(
-                        state = markerState,
-                        title = report.reportType,
-                        snippet = report.reportType, // Changed from report.comments to report.reportType
-                        icon = markerIconFactory.createMarkerIcon(report),
-                        onClick = {
-                            mainViewModel.onMarkerClicked(report)
-                            scope.launch { reportSheetState.show() }
-                            true
+            // Iterate over displayedMarkers instead of rawReports
+            mapState.displayedMarkers.forEach { displayMarker ->
+                when (displayMarker) {
+                    is DisplayMarker.IndividualReport -> {
+                        val report = displayMarker.report
+                        val position = displayMarker.displayLatLng
+                        val markerState = rememberMarkerState(position = position)
+                        Marker(
+                            state = markerState,
+                            title = report.reportType,
+                            snippet = report.reportType,
+                            icon = markerIconFactory.createMarkerIcon(report),
+                            anchor = Offset(0.5f, 0.5f), // Set anchor to center of icon for consistent line attachment
+                            onClick = {
+                                mainViewModel.onMarkerClicked(report)
+                                scope.launch { reportSheetState.show() }
+                                true
+                            }
+                        )
+                        // Draw line from center to individual marker if it was spread
+                        displayMarker.groupCenterLatLng?.let { center ->
+                            Polyline(
+                                points = listOf(center, position), // position is now center of marker
+                                color = Color.Blue, // Changed color to blue
+                                width = 3f // Line width
+                            )
                         }
-                    )
+                    }
+                    is DisplayMarker.GroupMarker -> {
+                        val position = displayMarker.centerLatLng
+                        val markerState = rememberMarkerState(position = position)
+                        Marker(
+                            state = markerState,
+                            title = "${displayMarker.count} Reports",
+                            snippet = "Click to view reports",
+                            icon = markerIconFactory.createGroupMarkerIcon(displayMarker.count),
+                            onClick = {
+                                // When a group marker is clicked, trigger the ViewModel to fetch details
+                                mainViewModel.onGroupMarkerClicked(displayMarker.geohash)
+                                // The dialog will show via LaunchedEffect when ViewModel updates selectedGroupedFullReports
+                                true
+                            }
+                        )
+                    }
+                    is DisplayMarker.SpreadCenter -> {
+                        // This marker represents the yellow circle at the center
+                        val position = displayMarker.centerLatLng
+                        val markerState = rememberMarkerState(position = position)
+                        Marker(
+                            state = markerState,
+                            title = "Report Location",
+                            icon = markerIconFactory.createSpreadCenterIcon()
+                        )
+                    }
                 }
             }
-
 
             // Draw NWS Alert Polygons
             mapState.activeAlerts.forEach { alert ->
@@ -349,6 +418,21 @@ fun MainScreen(
             }
         }
     }
+}
+
+/**
+ * Helper function to convert a full Report object to a MapReport object.
+ * This is needed because `onMarkerClicked` expects a MapReport, but the dialog
+ * now provides full Report objects.
+ */
+private fun Report.toMapReport(): MapReport {
+    return MapReport(
+        reportId = this.reportId,
+        location = this.location,
+        direction = this.direction,
+        reportType = this.reportType,
+        geohash = this.geohash
+    )
 }
 
 /**
@@ -616,6 +700,59 @@ private fun AlertDetailsDialog(alert: AlertFeature, onDismiss: () -> Unit) {
 }
 
 /**
+ * Composable for displaying a list of reports within a group.
+ * Now displays full Report objects.
+ */
+@Composable
+private fun GroupedReportsDialog(
+    reports: List<Report>, // Changed to List<Report> to access full details
+    onDismiss: () -> Unit,
+    onReportSelected: (Report) -> Unit // Changed to take Report
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Reports in this Area (${reports.size})") },
+        text = {
+            LazyColumn {
+                items(reports) { report ->
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .clickable { onReportSelected(report) },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            // Display Report Type and relative time
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(report.reportType, fontWeight = FontWeight.Bold)
+                                report.timestamp?.time?.let {
+                                    Text(getRelativeTime(it), style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                            // Display description in smaller letters
+                            report.comments?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
+}
+
+
+/**
  * Helper function to map AlertSeverity to a Color for display.
  */
 @Composable
@@ -735,7 +872,7 @@ private fun ReportBottomSheetContent(
                 Text("Comments", style = MaterialTheme.typography.titleLarge)
                 Button(onClick = onAddCommentClicked) {
                     Icon(Icons.Default.Add, contentDescription = "Add Comment", modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.size(8.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text("Add Comment")
                 }
             }
@@ -939,6 +1076,75 @@ class MarkerIconFactory(private val context: Context) {
     }
 
     /**
+     * Creates a custom marker icon for a group of reports, displaying the count.
+     *
+     * @param count The number of reports in the group.
+     * @return A BitmapDescriptor for the group marker.
+     */
+    fun createGroupMarkerIcon(count: Int): BitmapDescriptor? {
+        val cacheKey = "group_$count"
+        if (iconCache.containsKey(cacheKey)) {
+            return iconCache[cacheKey]
+        }
+
+        // Define bitmap size for group marker (larger than individual for visibility)
+        val size = 150 // pixels
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+
+        // Draw a solid circle background
+        val circlePaint = Paint().apply {
+            color = GraphicsColor.BLUE // Group marker color
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f, circlePaint)
+
+        // Draw the count text
+        val textPaint = Paint().apply {
+            color = GraphicsColor.WHITE
+            textSize = 70f // Adjust text size
+            textAlign = Paint.Align.CENTER
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            isAntiAlias = true
+        }
+        // Center the text vertically
+        val xPos = canvas.width / 2f
+        val yPos = (canvas.height / 2f) - ((textPaint.descent() + textPaint.ascent()) / 2f)
+        canvas.drawText(count.toString(), xPos, yPos, textPaint)
+
+        val descriptor = BitmapDescriptorFactory.fromBitmap(bitmap)
+        iconCache[cacheKey] = descriptor
+        return descriptor
+    }
+
+    /**
+     * Creates a small blue circle icon for the center of a spread group.
+     */
+    fun createSpreadCenterIcon(): BitmapDescriptor? {
+        val cacheKey = "spread_center"
+        if (iconCache.containsKey(cacheKey)) {
+            return iconCache[cacheKey]
+        }
+
+        val size = 40 // pixels (smaller size for the center marker)
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+
+        val paint = Paint().apply {
+            color = GraphicsColor.BLUE // Changed color to blue
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+
+        val descriptor = BitmapDescriptorFactory.fromBitmap(bitmap)
+        iconCache[cacheKey] = descriptor
+        return descriptor
+    }
+
+
+    /**
      * Rotates a given Bitmap by a specified number of degrees.
      *
      * @param degrees The rotation angle in degrees.
@@ -966,7 +1172,7 @@ fun MainScreenPreview() {
                     .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(16.dp),
                 horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.SpaceBetween
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 MapTypeSelector(currentMapType = MapType.NORMAL, onMapTypeSelected = {})
                 ActionButtons(navController = rememberNavController())
