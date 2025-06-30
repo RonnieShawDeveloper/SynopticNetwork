@@ -20,7 +20,9 @@ import com.artificialinsightsllc.synopticnetwork.ui.screens.MainScreen
 import com.artificialinsightsllc.synopticnetwork.ui.screens.MakeReportScreen
 import com.artificialinsightsllc.synopticnetwork.ui.screens.SignUpScreen
 import com.artificialinsightsllc.synopticnetwork.ui.screens.SplashScreen
-import com.artificialinsightsllc.synopticnetwork.ui.screens.SettingsScreen // Import the new SettingsScreen
+import com.artificialinsightsllc.synopticnetwork.ui.screens.SettingsScreen
+import com.artificialinsightsllc.synopticnetwork.ui.screens.ProductMenuScreen // NEW: Import ProductMenuScreen
+import com.artificialinsightsllc.synopticnetwork.ui.screens.ProductDetailScreen // NEW: Import ProductDetailScreen
 import com.artificialinsightsllc.synopticnetwork.ui.viewmodels.MakeReportViewModel
 
 /**
@@ -35,7 +37,19 @@ sealed class Screen(val route: String) {
     object Main : Screen("main_screen")
     object MakeReport : Screen("make_report_screen")
     object Camera : Screen("camera_screen")
-    object Settings : Screen("settings_screen") // New route for SettingsScreen
+    object Settings : Screen("settings_screen")
+    // MODIFIED: Route for Product Menu, now with a WFO argument
+    object ProductMenu : Screen("product_menu_screen/{wfo}") {
+        fun createRoute(wfo: String): String {
+            return "product_menu_screen/$wfo"
+        }
+    }
+    // NEW: Route for Product Detail, with arguments for productCode and wfo
+    object ProductDetail : Screen("product_detail_screen/{productCode}/{wfo}") {
+        fun createRoute(productCode: String, wfo: String): String {
+            return "product_detail_screen/$productCode/$wfo"
+        }
+    }
 }
 
 /**
@@ -134,6 +148,38 @@ fun AppNavigation() {
             popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(animationDuration)) }
         ) {
             SettingsScreen(navController = navController)
+        }
+
+        // MODIFIED: Product Menu Screen Route - now expects a WFO argument
+        composable(
+            route = Screen.ProductMenu.route,
+            arguments = listOf(
+                androidx.navigation.navArgument("wfo") { type = androidx.navigation.NavType.StringType }
+            ),
+            enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(animationDuration)) },
+            exitTransition = { slideOutHorizontally(targetOffsetX = { -it }, animationSpec = tween(animationDuration)) },
+            popEnterTransition = { slideInHorizontally(initialOffsetX = { -it }, animationSpec = tween(animationDuration)) },
+            popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(animationDuration)) }
+        ) { backStackEntry ->
+            val wfo = backStackEntry.arguments?.getString("wfo") ?: ""
+            ProductMenuScreen(navController = navController, wfo = wfo) // Pass WFO to screen
+        }
+
+        // NEW: Product Detail Screen Route - Slides in from the right, expects arguments
+        composable(
+            route = Screen.ProductDetail.route,
+            arguments = listOf(
+                androidx.navigation.navArgument("productCode") { type = androidx.navigation.NavType.StringType },
+                androidx.navigation.navArgument("wfo") { type = androidx.navigation.NavType.StringType }
+            ),
+            enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(animationDuration)) },
+            exitTransition = { slideOutHorizontally(targetOffsetX = { -it }, animationSpec = tween(animationDuration)) },
+            popEnterTransition = { slideInHorizontally(initialOffsetX = { -it }, animationSpec = tween(animationDuration)) },
+            popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(animationDuration)) }
+        ) { backStackEntry ->
+            val productCode = backStackEntry.arguments?.getString("productCode") ?: ""
+            val wfo = backStackEntry.arguments?.getString("wfo") ?: ""
+            ProductDetailScreen(navController = navController, productCode = productCode, wfo = wfo)
         }
     }
 }

@@ -7,8 +7,10 @@ import android.graphics.Canvas
 import android.graphics.Color as GraphicsColor // Alias to avoid ambiguity with Compose Color
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.util.Log // Import Log
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,6 +39,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Layers
@@ -101,6 +104,7 @@ import com.artificialinsightsllc.synopticnetwork.ui.theme.SynopticNetworkTheme
 import com.artificialinsightsllc.synopticnetwork.ui.theme.Transparent_Black
 import com.artificialinsightsllc.synopticnetwork.ui.viewmodels.MainViewModel
 import com.artificialinsightsllc.synopticnetwork.ui.viewmodels.DisplayMarker // Import DisplayMarker
+import com.artificialinsightsllc.synopticnetwork.ui.viewmodels.DisplayAlert // NEW: Import DisplayAlert
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
@@ -232,7 +236,7 @@ fun MainScreen(
             modifier = Modifier.fillMaxHeight(0.9f)
         ) {
             AlertsBottomSheetContent(
-                activeAlerts = mapState.activeAlerts,
+                activeAlerts = mapState.activeAlerts, // MODIFIED: Pass DisplayAlert list
                 isLoadingAlerts = mapState.alertsLoading,
                 radarWfo = mapState.radarWfo
             )
@@ -341,7 +345,8 @@ fun MainScreen(
             }
 
             // Draw NWS Alert Polygons
-            mapState.activeAlerts.forEach { alert ->
+            mapState.activeAlerts.forEach { displayAlert -> // MODIFIED: Iterate over DisplayAlert
+                val alert = displayAlert.alert // Get the actual AlertFeature
                 alert.geometry?.let { geometry ->
                     if (geometry.type == "Polygon" && !geometry.coordinates.isNullOrEmpty()) {
                         // NWS polygon coordinates are [lon, lat], Google Maps expects LatLng(lat, lon)
@@ -414,7 +419,8 @@ fun MainScreen(
                 )
 
                 // Action Buttons are now aligned to the bottom end of the column
-                ActionButtons(navController = navController)
+                // Pass mapState.radarWfo to ActionButtons
+                ActionButtons(navController = navController, radarWfo = mapState.radarWfo)
             }
         }
     }
@@ -443,7 +449,9 @@ private fun getAlertsFabColor(highestSeverity: AlertSeverity): Color {
     return when (highestSeverity) {
         AlertSeverity.EXTREME -> Color(0xFFD32F2F) // Red (Error)
         AlertSeverity.SEVERE -> Color(0xFFF57C00) // Orange
-        AlertSeverity.MODERATE, AlertSeverity.MINOR, AlertSeverity.UNKNOWN -> Color(0xFF1976D2) // Blue
+        AlertSeverity.MODERATE -> Color(0xFFFFA000) // Darker Orange/Amber
+        AlertSeverity.MINOR -> Color(0xFF1976D2) // Blue
+        AlertSeverity.UNKNOWN -> Color(0xFF1976D2) // Blue for unknown as well
         AlertSeverity.NONE -> Color(0xFF388E3C) // Green (Success)
     }
 }
@@ -484,7 +492,7 @@ private fun ActiveAlertsFAB(alertCount: Int, highestSeverity: AlertSeverity, onC
  */
 @Composable
 fun AlertsBottomSheetContent(
-    activeAlerts: List<AlertFeature>,
+    activeAlerts: List<DisplayAlert>, // MODIFIED: Now takes DisplayAlert list
     isLoadingAlerts: Boolean,
     radarWfo: String?
 ) {
@@ -575,10 +583,11 @@ fun AlertsBottomSheetContent(
         }
 
         // Sort alerts by severity (Extreme first)
-        val sortedAlerts = activeAlerts.sortedByDescending { AlertSeverity.fromString(it.properties.severity).level }
+        // MODIFIED: Sort DisplayAlerts, then access their alert.properties.severity
+        val sortedAlerts = activeAlerts.sortedByDescending { AlertSeverity.fromString(it.alert.properties.severity).level }
 
-        items(sortedAlerts) { alert ->
-            AlertItem(alert = alert)
+        items(sortedAlerts) { displayAlert -> // MODIFIED: Iterate over DisplayAlert
+            AlertItem(displayAlert = displayAlert) // MODIFIED: Pass DisplayAlert
         }
 
         // Spacer at the bottom
@@ -588,11 +597,22 @@ fun AlertsBottomSheetContent(
 
 /**
  * Composable for displaying a single NWS alert item.
+ * MODIFIED: Now takes DisplayAlert to access isLocal flag.
  */
 @Composable
-private fun AlertItem(alert: AlertFeature) {
+private fun AlertItem(displayAlert: DisplayAlert) {
+    val alert = displayAlert.alert // Extract the AlertFeature
+    val isLocal = displayAlert.isLocal // Get the local status
+
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (isLocal) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else Color.Transparent) // Highlight local alerts
+            .border(
+                width = if (isLocal) 2.dp else 0.dp, // Add a border for local alerts
+                color = if (isLocal) MaterialTheme.colorScheme.primary else Color.Transparent,
+                shape = RoundedCornerShape(8.dp)
+            ),
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
@@ -615,6 +635,17 @@ private fun AlertItem(alert: AlertFeature) {
                     fontWeight = FontWeight.SemiBold,
                     color = getAlertSeverityColor(AlertSeverity.fromString(alert.properties.severity))
                 )
+            }
+            // NEW: Display remaining time until expiration
+            alert.properties.expires?.let { expiresTimestamp ->
+                val remainingTime = getRemainingTime(expiresTimestamp)
+                if (remainingTime != null) {
+                    Text(
+                        "Expires in: $remainingTime",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(4.dp))
             Text(alert.properties.headline ?: "", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
@@ -671,6 +702,18 @@ private fun AlertDetailsDialog(alert: AlertFeature, onDismiss: () -> Unit) {
                     Text(it, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(4.dp))
                 }
+                // NEW: Display remaining time until expiration in dialog
+                alert.properties.expires?.let { expiresTimestamp ->
+                    val remainingTime = getRemainingTime(expiresTimestamp)
+                    if (remainingTime != null) {
+                        Text(
+                            "Expires in: $remainingTime",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
+                }
                 alert.properties.areaDesc?.let {
                     Text("Affected Area: $it", style = MaterialTheme.typography.bodySmall, fontStyle = FontStyle.Italic)
                     Spacer(modifier = Modifier.height(8.dp))
@@ -687,7 +730,7 @@ private fun AlertDetailsDialog(alert: AlertFeature, onDismiss: () -> Unit) {
                     Spacer(modifier = Modifier.height(8.dp))
                 }
                 alert.properties.instruction?.let {
-                    Text("Instructions: $it", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                    Text("Instructions: ${it}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                 }
             }
         },
@@ -734,7 +777,7 @@ private fun GroupedReportsDialog(
                                     Text(getRelativeTime(it), style = MaterialTheme.typography.bodySmall)
                                 }
                             }
-                            // Display description in smaller letters
+                            // Display comments if available
                             report.comments?.let {
                                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
@@ -779,6 +822,38 @@ private fun formatTimestamp(isoTimestamp: String): String {
     } catch (e: Exception) {
         e.printStackTrace()
         isoTimestamp // Return original if parsing fails
+    }
+}
+
+/**
+ * Helper function to calculate and format the remaining time until an alert expires.
+ * Returns a human-readable string (e.g., "1 hour", "2 days", "5 minutes").
+ */
+private fun getRemainingTime(isoTimestamp: String): String? {
+    return try {
+        val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US)
+        val expirationDate = parser.parse(isoTimestamp) ?: return null
+        val now = Date()
+
+        val diffMillis = expirationDate.time - now.time
+
+        if (diffMillis <= 0) {
+            return "Expired"
+        }
+
+        val days = TimeUnit.MILLISECONDS.toDays(diffMillis)
+        val hours = TimeUnit.MILLISECONDS.toHours(diffMillis - TimeUnit.DAYS.toMillis(days))
+        val minutes = TimeUnit.MILLISECONDS.toMinutes(diffMillis - TimeUnit.DAYS.toMillis(days) - TimeUnit.HOURS.toMillis(hours))
+
+        return when {
+            days > 0 -> "$days day${if (days > 1) "s" else ""}"
+            hours > 0 -> "$hours hour${if (hours > 1) "s" else ""}"
+            minutes > 0 -> "$minutes minute${if (minutes > 1) "s" else ""}"
+            else -> "Less than a minute"
+        }
+    } catch (e: Exception) {
+        e.printStackTrace()
+        null
     }
 }
 
@@ -952,9 +1027,9 @@ private fun getRelativeTime(timestamp: Long): String {
     val days = TimeUnit.MILLISECONDS.toDays(diff)
     return when {
         minutes < 1 -> "Just now"
-        minutes < 60 -> "$minutes minutes ago"
-        hours < 24 -> "$hours hours ago"
-        else -> "$days days ago"
+        minutes < 60 -> "$minutes minute${if (minutes > 1) "s" else ""}"
+        hours < 24 -> "$hours hour${if (hours > 1) "s" else ""}"
+        else -> "$days day${if (days > 1) "s" else ""}"
     }
 }
 
@@ -974,8 +1049,41 @@ private fun MapTypeSelector(currentMapType: MapType, onMapTypeSelected: (MapType
 }
 
 @Composable
-private fun ActionButtons(navController: NavHostController, modifier: Modifier = Modifier) {
+private fun ActionButtons(
+    navController: NavHostController,
+    modifier: Modifier = Modifier,
+    radarWfo: String?
+) {
+    // Access the MainViewModel to get the radarWfo
+    val mainViewModel: MainViewModel = viewModel()
+    val mainUiState by mainViewModel.uiState.collectAsState()
+    val radarWfo = mainUiState.radarWfo // Get the WFO from MainViewModel's state
+
     Column(modifier = modifier, horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        // NEW: FAB for Weather Products
+        FloatingActionButton(
+            onClick = {
+                // Ensure radarWfo is not null before navigating
+                radarWfo?.let { wfo ->
+                    // Remove the leading "K" from radarWfo to get the 3-letter WFO code
+                    val cleanWfo = wfo.removePrefix("K")
+                    Log.d("ActionButtons", "Navigating to ProductMenu with cleanWfo: $cleanWfo") // Added log
+                    if (cleanWfo.isNotBlank()) {
+                        navController.navigate(Screen.ProductMenu.createRoute(cleanWfo))
+                    } else {
+                        Log.w("ActionButtons", "Cleaned WFO is blank, cannot navigate to ProductMenu.")
+                    }
+                } ?: run {
+                    Log.w("ActionButtons", "radarWfo is null, cannot navigate to ProductMenu.")
+                }
+            },
+            // Disable FAB if radarWfo is null or empty
+            enabled = radarWfo != null && radarWfo.removePrefix("K").isNotBlank(),
+            containerColor = MaterialTheme.colorScheme.secondary,
+            contentColor = Color.White
+        ) {
+            Icon(Icons.Default.Description, "Weather Products")
+        }
         FloatingActionButton(
             onClick = { navController.navigate(Screen.Settings.route) }, // Navigate to Settings Screen
             containerColor = MaterialTheme.colorScheme.secondary,

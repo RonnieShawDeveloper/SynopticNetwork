@@ -5,6 +5,8 @@ import com.artificialinsightsllc.synopticnetwork.BuildConfig
 import com.artificialinsightsllc.synopticnetwork.data.models.GeocodingResponse
 import com.artificialinsightsllc.synopticnetwork.data.models.NwsAlertsResponse // Import the new alerts response model
 import com.artificialinsightsllc.synopticnetwork.data.models.NwsPointResponse
+import com.artificialinsightsllc.synopticnetwork.data.models.NwsProductListResponse // NEW: Import NwsProductListResponse
+import com.artificialinsightsllc.synopticnetwork.data.models.NwsProductDetailResponse // NEW: Import NwsProductDetailResponse
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -36,16 +38,29 @@ interface NwsApi {
         @Query("key") apiKey: String
     ): GeocodingResponse
 
-    // New endpoint for fetching active NWS alerts
+    // MODIFIED: Changed from 'point' to 'area' and updated urgency parameter
     @GET("alerts/active")
     suspend fun getActiveAlerts(
         @Query("status") status: String = "actual",
         @Query("message_type") messageType: String = "alert,update,cancel",
-        @Query("point") point: String, // Formatted as "lat,lon"
-        @Query("urgency") urgency: String = "Immediate",
+        @Query("area") area: String, // MODIFIED: Now takes a state code (e.g., "FL")
+        @Query("urgency") urgency: String = "Immediate,Expected,Future,Past,Unknown", // MODIFIED: All urgency types
         @Query("severity") severity: String = "Extreme,Severe,Moderate,Minor,Unknown",
         @Query("certainty") certainty: String = "Observed,Likely,Possible,Unlikely,Unknown"
     ): NwsAlertsResponse
+
+    // MODIFIED: Changed return type from List<NwsProductListResponse> to NwsProductListResponse
+    @GET("products/locations/{wfo}/types")
+    suspend fun getProductTypes(
+        @Path("wfo") wfo: String
+    ): NwsProductListResponse // MODIFIED: Now returns the wrapper object
+
+    // NEW: Endpoint to get the latest product text
+    @GET("products/types/{productCode}/locations/{wfo}/latest")
+    suspend fun getLatestProduct(
+        @Path("productCode") productCode: String,
+        @Path("wfo") wfo: String
+    ): NwsProductDetailResponse
 }
 
 /**
@@ -69,7 +84,7 @@ class NwsApiService {
         .addInterceptor(loggingInterceptor)
         .addInterceptor { chain ->
             val request = chain.request().newBuilder()
-                .header("User-Agent", "SynopticNetwork (rdspromo@gmail.com)") // NWS requires this
+                .header("User-Agent", "SynopticNetwork (rdspromo@gmail.00)") // NWS requires this
                 .build()
             chain.proceed(request)
         }
@@ -135,21 +150,19 @@ class NwsApiService {
     }
 
     /**
-     * Fetches active NWS alerts for a given geographical point.
+     * Fetches active NWS alerts for a given state.
      *
-     * @param latitude The latitude of the point.
-     * @param longitude The longitude of the point.
+     * @param stateCode The 2-letter state code (e.g., "FL").
      * @return An [NwsAlertsResponse] object containing active alerts, or null on error.
      */
-    suspend fun getActiveAlerts(latitude: Double, longitude: Double): NwsAlertsResponse? {
-        val pointString = "$latitude,$longitude"
-        Log.i(TAG, "Fetching active alerts for point: $pointString")
+    suspend fun getActiveAlerts(stateCode: String): NwsAlertsResponse? {
+        Log.i(TAG, "Fetching active alerts for state: $stateCode")
         return try {
-            val response = nwsApi.getActiveAlerts(point = pointString)
+            val response = nwsApi.getActiveAlerts(area = stateCode)
             Log.d(TAG, "NWS Active Alerts Response: $response")
             response
         } catch (e: Exception) {
-            Log.e(TAG, "Error fetching active alerts for point $pointString", e)
+            Log.e(TAG, "Error fetching active alerts for state $stateCode", e)
             null
         }
     }
@@ -177,6 +190,45 @@ class NwsApiService {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error fetching WFO for radar for lat: $latitude, lon: $longitude", e)
+            null
+        }
+    }
+
+    // NEW: Functions for NWS Products
+
+    /**
+     * Fetches a list of available weather product types for a given WFO.
+     *
+     * @param wfo The 3-letter WFO identifier (e.g., "TBW").
+     * @return An [NwsProductListResponse] object containing the list of products, or an empty object on error.
+     */
+    suspend fun getAvailableProductTypes(wfo: String): NwsProductListResponse { // MODIFIED return type
+        Log.i(TAG, "Fetching available product types for WFO: $wfo")
+        return try {
+            val response = nwsApi.getProductTypes(wfo)
+            Log.d(TAG, "Available Product Types Response: $response")
+            response
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching available product types for WFO $wfo", e)
+            NwsProductListResponse(emptyList()) // Return an empty response on error
+        }
+    }
+
+    /**
+     * Fetches the latest content for a specific NWS product.
+     *
+     * @param productCode The product code (e.g., "AFD").
+     * @param wfo The 3-letter WFO identifier.
+     * @return An [NwsProductDetailResponse] object, or null if not found or an error occurs.
+     */
+    suspend fun getLatestProduct(productCode: String, wfo: String): NwsProductDetailResponse? {
+        Log.i(TAG, "Fetching latest product: $productCode for WFO: $wfo")
+        return try {
+            val response = nwsApi.getLatestProduct(productCode, wfo)
+            Log.d(TAG, "Latest Product Response: $response")
+            response
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching latest product $productCode for WFO $wfo", e)
             null
         }
     }

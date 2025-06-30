@@ -66,7 +66,8 @@ data class AlertProperties(
     val headline: String? = null, // Short, summarizing text
     val description: String? = null, // Detailed description of the alert
     val instruction: String? = null, // Recommended actions for the public
-    val response: String? = null // Recommended response (e.g., "Evacuate", "Shelter", "Avoid")
+    val response: String? = null, // Recommended response (e.g., "Evacuate", "Shelter", "Avoid")
+    val UGC: List<String>? = null // NEW: Added for User Geocodes (zones)
     // Note: 'parameters' field is complex and often contains varied structures,
     // so it's omitted here for simplicity unless specifically needed.
 )

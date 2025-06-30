@@ -3,6 +3,7 @@ package com.artificialinsightsllc.synopticnetwork.ui.viewmodels
 import android.annotation.SuppressLint
 import android.content.Context
 import android.location.Location
+import android.util.Log // Added Log import
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.artificialinsightsllc.synopticnetwork.data.models.AlertFeature
@@ -26,6 +27,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine // Import for suspendCancellableCoroutine
+import java.util.Locale // Added Locale import
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -50,6 +55,12 @@ sealed class DisplayMarker {
     data class SpreadCenter(val centerLatLng: LatLng, val geohash: String) : DisplayMarker()
 }
 
+// NEW: Wrapper data class for alerts to include local status
+data class DisplayAlert(
+    val alert: AlertFeature,
+    val isLocal: Boolean // True if this alert affects the user's current zone
+)
+
 /**
  * Data class to hold the entire state of the map screen, including alert data.
  */
@@ -60,17 +71,19 @@ data class MapState(
     val rawReports: List<MapReport> = emptyList(), // Store the raw, unfiltered reports from Firestore
     val displayedMarkers: List<DisplayMarker> = emptyList(), // The list of markers actually shown on map
     val selectedReport: Report? = null, // Used for the individual report bottom sheet
-    val selectedGroupedFullReports: List<Report> = emptyList(), // NEW: Used for the grouped reports dialog
+    val selectedGroupedFullReports: List<Report> = emptyList(), // Used for the grouped reports dialog
     val comments: List<Comment> = emptyList(),
     val isLoadingComments: Boolean = false,
     val currentUserScreenName: String? = null,
     val reportTypeFilters: Map<String, Boolean> = initialFilters,
-    val activeAlerts: List<AlertFeature> = emptyList(),
+    val activeAlerts: List<DisplayAlert> = emptyList(), // MODIFIED: Now holds DisplayAlert
     val alertsLoading: Boolean = false,
     val highestSeverity: AlertSeverity = AlertSeverity.NONE,
     val radarWfo: String? = null,
     val currentMapZoom: Float = 10f,
-    val userGeohash3Char: String? = null // NEW: User's 3-char geohash for local report loading
+    val userGeohash3Char: String? = null, // User's 3-char geohash for local report loading
+    val userStateCode: String? = null, // NEW: User's 2-letter state code (e.g., "FL")
+    val userForecastZone: String? = null // NEW: User's NWS forecast zone (e.g., "FLZ151")
 )
 
 // Initialize the filters with all types set to true (visible)
@@ -99,7 +112,7 @@ class MainViewModel : ViewModel() {
 
     private var commentsListenerJob: Job? = null
     private var alertsPollingJob: Job? = null
-    private var reportsListenerJob: Job? = null // NEW: To manage the reports listener
+    private var reportsListenerJob: Job? = null // To manage the reports listener
 
     init {
         // Fetch user profile (only screen name for now)
@@ -114,7 +127,9 @@ class MainViewModel : ViewModel() {
                 val user = userService.getUserProfile(userId)
                 _mapState.update {
                     it.copy(
-                        currentUserScreenName = user?.screenName
+                        currentUserScreenName = user?.screenName,
+                        // NEW: Populate userForecastZone from the user profile
+                        userForecastZone = user?.zone
                     )
                 }
             } else {
@@ -130,16 +145,44 @@ class MainViewModel : ViewModel() {
      */
     fun onMapReady(context: Context) {
         viewModelScope.launch {
-            getCurrentLocation(context) { location ->
-                // Calculate 3-char geohash from current location
-                val userGeohash3Char = GeoHash.withBitPrecision(location.latitude, location.longitude, GEOHASH_PRECISION_FOR_AREA_LOADING * 5).toBase32()
+            val location = getCurrentLocation(context) // MODIFIED: Call suspend function directly
+            if (location == null) {
+                Log.e("MainViewModel", "Could not get current location.")
+                _mapState.update { it.copy(isLoading = false) }
+                return@launch
+            }
 
-                _mapState.update { it.copy(currentLocation = location, isLoading = false, currentMapZoom = 10f, userGeohash3Char = userGeohash3Char) }
+            // Calculate 3-char geohash from current location
+            val userGeohash3Char = GeoHash.withBitPrecision(location.latitude, location.longitude, GEOHASH_PRECISION_FOR_AREA_LOADING * 5).toBase32()
 
-                // Start listening for reports based on current location's geohash
-                listenForMapReports(userGeohash3Char)
-                // Start polling for alerts once we have a location
-                startAlertsPolling(location)
+            // NEW: Determine user's state code and WFO/Zone
+            val pointData = nwsApiService.getNwsPointData(location.latitude, location.longitude)
+            val userStateCode = pointData?.properties?.forecastZone
+                ?.substringAfterLast("/") // e.g., "FLZ151"
+                ?.substring(0, 2) // Extract "FL"
+                ?.uppercase(Locale.US) // Ensure uppercase
+
+            val userForecastZone = pointData?.properties?.forecastZone?.substringAfterLast("/")
+
+            _mapState.update {
+                it.copy(
+                    currentLocation = location,
+                    isLoading = false,
+                    currentMapZoom = 10f,
+                    userGeohash3Char = userGeohash3Char,
+                    userStateCode = userStateCode, // NEW: Store state code
+                    userForecastZone = userForecastZone // NEW: Store forecast zone
+                )
+            }
+
+            // Start listening for reports based on current location's geohash
+            listenForMapReports(userGeohash3Char)
+            // Start polling for alerts once we have a state code
+            if (userStateCode != null) {
+                startAlertsPolling(userStateCode, userForecastZone)
+            } else {
+                Log.e("MainViewModel", "Could not determine user's state code for alerts.")
+                _mapState.update { it.copy(alertsLoading = false) }
             }
         }
     }
@@ -157,7 +200,7 @@ class MainViewModel : ViewModel() {
                         currentState.copy(rawReports = mapReports)
                     }
                     // Trigger update of displayed markers whenever raw reports change
-                    updateDisplayedMarkers()
+                    this@MainViewModel.updateDisplayedMarkers() // Corrected call
                 }
         }
     }
@@ -172,7 +215,7 @@ class MainViewModel : ViewModel() {
         if (_mapState.value.currentMapZoom != newZoom) {
             _mapState.update { it.copy(currentMapZoom = newZoom) }
             // Trigger update of displayed markers whenever zoom changes
-            updateDisplayedMarkers()
+            this@MainViewModel.updateDisplayedMarkers() // Corrected call
         }
     }
 
@@ -180,24 +223,11 @@ class MainViewModel : ViewModel() {
      * Orchestrates the grouping and spreading logic based on the current zoom level
      * and updates the `displayedMarkers` in `MapState`.
      */
-    private fun updateDisplayedMarkers() {
-        _mapState.update { currentState ->
-            val processedMarkers = groupAndSpreadReports(currentState.rawReports, currentState.currentMapZoom)
-            currentState.copy(displayedMarkers = processedMarkers)
-        }
-    }
-
-    /**
-     * Groups and/or spreads reports based on the current zoom level and Geohash.
-     * This is the core logic for managing marker density.
-     */
-    private fun groupAndSpreadReports(
-        reports: List<MapReport>,
-        zoom: Float
-    ): List<DisplayMarker> {
+    private fun updateDisplayedMarkers(): List<DisplayMarker> { // Changed to return List<DisplayMarker>
+        val currentState = _mapState.value // Get the current state
         // Filter reports based on the user's selected report type filters
-        val filteredReports = reports.filter { report ->
-            uiState.value.reportTypeFilters[report.reportType] ?: true // Default to true if filter not set
+        val filteredReports = currentState.rawReports.filter { report ->
+            currentState.reportTypeFilters[report.reportType] ?: true // Default to true if filter not set
         }
 
         // Group by Geohash to manage proximity
@@ -208,7 +238,7 @@ class MainViewModel : ViewModel() {
         // Logic based on zoom level:
         when {
             // High zoom: Spread out markers that share the same Geohash
-            zoom >= MIN_SPREAD_ZOOM -> {
+            currentState.currentMapZoom >= MIN_SPREAD_ZOOM -> { // Corrected: Use currentState.currentMapZoom
                 reportsByGeohash.forEach { (geohash, geohashReports) ->
                     if (geohashReports.size > 1) {
                         // More than one report in this Geohash, apply spreading algorithm
@@ -243,7 +273,7 @@ class MainViewModel : ViewModel() {
                 }
             }
             // Low zoom: Group markers by Geohash
-            zoom < MIN_SPREAD_ZOOM -> {
+            currentState.currentMapZoom < MIN_SPREAD_ZOOM -> { // Corrected: Use currentState.currentMapZoom
                 reportsByGeohash.forEach { (geohash, geohashReports) ->
                     val centerLatLng = calculateCenter(geohashReports)
                     if (centerLatLng != null) {
@@ -316,28 +346,39 @@ class MainViewModel : ViewModel() {
 
     /**
      * Starts a coroutine job to periodically fetch active NWS alerts and radar WFO.
+     * MODIFIED: Now takes stateCode and userForecastZone for state-wide alerts and local highlighting.
      */
-    private fun startAlertsPolling(location: LatLng) {
+    private fun startAlertsPolling(stateCode: String, userForecastZone: String?) {
         alertsPollingJob?.cancel() // Cancel any existing polling job
         alertsPollingJob = viewModelScope.launch {
             while (true) {
                 _mapState.update { it.copy(alertsLoading = true) }
                 try {
-                    // Fetch active alerts
-                    val alertsResponse = nwsApiService.getActiveAlerts(location.latitude, location.longitude)
-                    val activeAlerts = alertsResponse?.features ?: emptyList()
+                    // Fetch active alerts for the entire state
+                    val alertsResponse = nwsApiService.getActiveAlerts(stateCode)
+                    val rawAlerts = alertsResponse?.features ?: emptyList()
 
-                    // Determine the highest severity
-                    val highestSeverity = activeAlerts.maxOfOrNull {
-                        AlertSeverity.fromString(it.properties.severity)
-                    } ?: AlertSeverity.NONE
+                    // Process alerts to determine if they are local
+                    val processedAlerts = rawAlerts.map { alertFeature ->
+                        val isLocal = userForecastZone != null && alertFeature.properties.UGC?.contains(userForecastZone) == true
+                        DisplayAlert(alertFeature, isLocal)
+                    }
 
-                    // Fetch radar WFO
-                    val radarWfo = nwsApiService.getRadarWfo(location.latitude, location.longitude)
+                    // Determine the highest severity among *all* fetched alerts
+                    // MODIFIED: Sort by severity level and pick the first (highest)
+                    val highestSeverity = processedAlerts
+                        .sortedByDescending { AlertSeverity.fromString(it.alert.properties.severity).level }
+                        .firstOrNull()?.let { AlertSeverity.fromString(it.alert.properties.severity) }
+                        ?: AlertSeverity.NONE
+
+                    // Fetch radar WFO (still based on user's current location for relevant radar)
+                    val radarWfo = _mapState.value.currentLocation?.let {
+                        nwsApiService.getRadarWfo(it.latitude, it.longitude)
+                    }
 
                     _mapState.update {
                         it.copy(
-                            activeAlerts = activeAlerts,
+                            activeAlerts = processedAlerts, // MODIFIED: Store processed alerts
                             highestSeverity = highestSeverity,
                             radarWfo = radarWfo,
                             alertsLoading = false
@@ -414,23 +455,36 @@ class MainViewModel : ViewModel() {
             state.copy(reportTypeFilters = updatedFilters)
         }
         // Re-process markers when filters change
-        updateDisplayedMarkers()
+        this@MainViewModel.updateDisplayedMarkers() // Corrected call
     }
 
     fun onMapTypeChanged(mapType: MapType) {
         _mapState.update { it.copy(mapProperties = it.mapProperties.copy(mapType = mapType)) }
     }
 
+    /**
+     * Suspends until the current location is fetched or an error occurs.
+     * @param context The application context.
+     * @return The LatLng of the current location, or null if fetching fails.
+     */
     @SuppressLint("MissingPermission")
-    private fun getCurrentLocation(context: Context, onLocationFetched: (LatLng) -> Unit) {
-        val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
-        fusedLocationClient.lastLocation
-            .addOnSuccessListener { location: Location? ->
-                location?.let { onLocationFetched(LatLng(it.latitude, it.longitude)) }
-                    ?: run { _mapState.update { it.copy(isLoading = false) } }
-            }
-            .addOnFailureListener { _mapState.update { it.copy(isLoading = false) } }
-    }
+    private suspend fun getCurrentLocation(context: Context): LatLng? =
+        suspendCancellableCoroutine { continuation ->
+            val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
+            fusedLocationClient.lastLocation
+                .addOnSuccessListener { location: Location? ->
+                    if (location != null) {
+                        continuation.resume(LatLng(location.latitude, location.longitude))
+                    } else {
+                        Log.w("MainViewModel", "Last location is null.")
+                        continuation.resume(null)
+                    }
+                }
+                .addOnFailureListener { e ->
+                    Log.e("MainViewModel", "Error fetching current location", e)
+                    continuation.resumeWithException(e)
+                }
+        }
 
     override fun onCleared() {
         super.onCleared()
