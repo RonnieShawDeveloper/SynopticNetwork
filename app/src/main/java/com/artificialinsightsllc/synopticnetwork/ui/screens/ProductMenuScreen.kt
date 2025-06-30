@@ -54,7 +54,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import com.artificialinsightsllc.synopticnetwork.R
-import com.artificialinsightsllc.synopticnetwork.data.models.NwsProductListResponse
+import com.artificialinsightsllc.synopticnetwork.data.models.NwsProductListResponse // Import the new wrapper
 import com.artificialinsightsllc.synopticnetwork.data.models.NwsProductListItem // NEW: Import NwsProductListItem
 import com.artificialinsightsllc.synopticnetwork.navigation.Screen
 import com.artificialinsightsllc.synopticnetwork.ui.theme.SynopticNetworkTheme
@@ -68,27 +68,27 @@ import kotlinx.coroutines.flow.update
  * Composable for the Product Menu screen, displaying a list of available weather products.
  *
  * @param navController The navigation controller.
- * @param wfo The WFO code passed as a navigation argument.
+ * @param officeCode The WFO code passed as a navigation argument.
  * @param productMenuViewModel The ViewModel for this screen.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProductMenuScreen(
     navController: NavHostController,
-    wfo: String, // MODIFIED: Now accepts WFO as a direct parameter
+    officeCode: String, // MODIFIED: Now accepts officeCode as a direct parameter
     productMenuViewModel: ProductMenuViewModel = viewModel()
 ) {
     val uiState by productMenuViewModel.uiState.collectAsState()
 
     // Fetch products when the screen is first composed and WFO is available
-    LaunchedEffect(wfo) { // MODIFIED: Depend on the passed WFO
-        Log.d("ProductMenuScreen", "LaunchedEffect triggered with WFO: $wfo")
-        if (wfo.isNotBlank()) {
-            productMenuViewModel.fetchProducts(wfo) // Use the passed WFO directly
+    LaunchedEffect(officeCode) { // MODIFIED: Depend on the passed officeCode
+        Log.d("ProductMenuScreen", "LaunchedEffect triggered with officeCode: $officeCode")
+        if (officeCode.isNotBlank()) {
+            productMenuViewModel.fetchProducts(officeCode) // Use the passed officeCode directly
         } else {
-            Log.w("ProductMenuScreen", "WFO is blank, not fetching products.")
-            // Optionally, set an error message in the ViewModel if WFO is missing
-            productMenuViewModel._uiState.update { it.copy(errorMessage = "WFO information is missing. Cannot fetch products.") }
+            Log.w("ProductMenuScreen", "Office Code is blank, not fetching products.")
+            // Optionally, set an error message in the ViewModel if officeCode is missing
+            productMenuViewModel._uiState.update { it.copy(errorMessage = "Office Code information is missing. Cannot fetch products.") }
         }
     }
 
@@ -144,9 +144,9 @@ fun ProductMenuScreen(
                     ) {
                         items(uiState.products) { product -> // 'product' here is NwsProductListItem
                             ProductCard(product = product) {
-                                // Navigate to the detail screen with productCode and WFO
-                                // Use the WFO passed to this screen
-                                navController.navigate(Screen.ProductDetail.createRoute(product.productCode, wfo))
+                                // Navigate to the detail screen with productCode and officeCode
+                                // Use the officeCode passed to this screen
+                                navController.navigate(Screen.ProductDetail.createRoute(product.productCode, officeCode))
                             }
                         }
                         item { Spacer(modifier = Modifier.height(16.dp)) } // Spacer at the bottom
@@ -263,6 +263,7 @@ fun ProductMenuScreenPreview() {
             )
         }
         // Pass a mock WFO for the preview
-        ProductMenuScreen(navController = rememberNavController(), wfo = "TBW", productMenuViewModel = mockViewModel)
+        ProductMenuScreen(navController = rememberNavController(), officeCode = "TBW", productMenuViewModel = mockViewModel)
     }
 }
+

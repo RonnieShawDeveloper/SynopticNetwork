@@ -391,12 +391,12 @@ fun MainScreen(
                 verticalAlignment = Alignment.Top
             ) {
                 // Legend FAB
-                FloatingActionButton(
+                androidx.compose.material3.FloatingActionButton( // Explicitly qualify
                     onClick = { showLegendSheet = true },
                     containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                     contentColor = MaterialTheme.colorScheme.onTertiaryContainer
                 ) {
-                    Icon(Icons.Default.Layers, contentDescription = "Map Legend")
+                    androidx.compose.material3.Icon(Icons.Default.Layers, contentDescription = "Map Legend") // Explicitly qualify
                 }
                 // Map Type Selector
                 MapTypeSelector(
@@ -412,11 +412,26 @@ fun MainScreen(
                 verticalAlignment = Alignment.Bottom
             ) {
                 // Alerts FAB with Badge
-                ActiveAlertsFAB(
-                    alertCount = mapState.activeAlerts.size,
-                    highestSeverity = mapState.highestSeverity,
-                    onClick = { showAlertsSheet = true }
-                )
+                androidx.compose.material3.FloatingActionButton( // Explicitly qualify
+                    onClick = { showAlertsSheet = true },
+                    containerColor = getAlertsFabColor(mapState.highestSeverity),
+                    contentColor = Color.White,
+                    modifier = Modifier.padding(bottom = 0.dp) // Adjust padding as needed
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        androidx.compose.material3.Icon(Icons.Default.Info, contentDescription = "Active Alerts") // Explicitly qualify
+                        if (mapState.activeAlerts.size > 0) {
+                            Badge(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = 10.dp, y = (-10).dp), // Offset badge to top-right of icon
+                                containerColor = MaterialTheme.colorScheme.error // Use error color for visibility
+                            ) {
+                                Text(mapState.activeAlerts.size.toString())
+                            }
+                        }
+                    }
+                }
 
                 // Action Buttons are now aligned to the bottom end of the column
                 // Pass mapState.radarWfo to ActionButtons
@@ -458,32 +473,20 @@ private fun getAlertsFabColor(highestSeverity: AlertSeverity): Color {
 
 /**
  * Composable for the Floating Action Button displaying active alert count and severity color.
+ * This composable is now directly integrated into the MainScreen's layout,
+ * and its FloatingActionButton is explicitly qualified there.
+ * This function itself is not directly causing the error, but its usage was.
+ * Keeping it here for logical separation, but the fix is applied in the caller.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ActiveAlertsFAB(alertCount: Int, highestSeverity: AlertSeverity, onClick: () -> Unit) {
     val fabColor = getAlertsFabColor(highestSeverity)
 
-    FloatingActionButton(
-        onClick = onClick,
-        containerColor = fabColor,
-        contentColor = Color.White,
-        modifier = Modifier.padding(bottom = 0.dp) // Adjust padding as needed
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.Info, contentDescription = "Active Alerts")
-            if (alertCount > 0) {
-                Badge(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .offset(x = 10.dp, y = (-10).dp), // Offset badge to top-right of icon
-                    containerColor = MaterialTheme.colorScheme.error // Use error color for visibility
-                ) {
-                    Text(alertCount.toString())
-                }
-            }
-        }
-    }
+    // This composable is now directly integrated into the MainScreen's layout,
+    // and its FloatingActionButton is explicitly qualified there.
+    // This function itself is not directly causing the error, but its usage was.
+    // Keeping it here for logical separation, but the fix is applied in the caller.
 }
 
 /**
@@ -1039,10 +1042,10 @@ private fun MapTypeSelector(currentMapType: MapType, onMapTypeSelected: (MapType
     Card(shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = Transparent_Black)) {
         Row {
             IconButton(onClick = { onMapTypeSelected(MapType.NORMAL) }) {
-                Icon(Icons.Default.Streetview, "Street View", tint = if (currentMapType == MapType.NORMAL) MaterialTheme.colorScheme.primary else Color.White)
+                androidx.compose.material3.Icon(Icons.Default.Streetview, "Street View", tint = if (currentMapType == MapType.NORMAL) MaterialTheme.colorScheme.primary else Color.White)
             }
             IconButton(onClick = { onMapTypeSelected(MapType.SATELLITE) }) {
-                Icon(Icons.Default.Satellite, "Satellite View", tint = if (currentMapType == MapType.SATELLITE) MaterialTheme.colorScheme.primary else Color.White)
+                androidx.compose.material3.Icon(Icons.Default.Satellite, "Satellite View", tint = if (currentMapType == MapType.SATELLITE) MaterialTheme.colorScheme.primary else Color.White)
             }
         }
     }
@@ -1052,53 +1055,62 @@ private fun MapTypeSelector(currentMapType: MapType, onMapTypeSelected: (MapType
 private fun ActionButtons(
     navController: NavHostController,
     modifier: Modifier = Modifier,
-    radarWfo: String?
+    radarWfo: String? // Use the parameter directly
 ) {
-    // Access the MainViewModel to get the radarWfo
-    val mainViewModel: MainViewModel = viewModel()
-    val mainUiState by mainViewModel.uiState.collectAsState()
-    val radarWfo = mainUiState.radarWfo // Get the WFO from MainViewModel's state
+    // Determine if the "Weather Products" FAB should be enabled
+    val isProductFabEnabled = radarWfo != null && radarWfo.removePrefix("K").isNotBlank()
+
+    // Define the onClick lambda for the "Weather Products" FAB
+    val productFabOnClick: () -> Unit = if (isProductFabEnabled) {
+        {
+            radarWfo?.let { wfo ->
+                val cleanWfo = wfo.removePrefix("K")
+                Log.d("ActionButtons", "Navigating to ProductMenu with cleanWFO: $cleanWfo")
+                if (cleanWfo.isNotBlank()) {
+                    navController.navigate(Screen.ProductMenu.createRoute(cleanWfo))
+                } else {
+                    Log.w("ActionButtons", "Cleaned WFO is blank, cannot navigate to ProductMenu.")
+                }
+            }
+        }
+    } else {
+        // Provide a no-op lambda when disabled
+        {}
+    }
+
+    // Determine the container color for the "Weather Products" FAB based on its enabled state
+    val productFabContainerColor = if (isProductFabEnabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
 
     Column(modifier = modifier, horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        // NEW: FAB for Weather Products
-        FloatingActionButton(
-            onClick = {
-                // Ensure radarWfo is not null before navigating
-                radarWfo?.let { wfo ->
-                    // Remove the leading "K" from radarWfo to get the 3-letter WFO code
-                    val cleanWfo = wfo.removePrefix("K")
-                    Log.d("ActionButtons", "Navigating to ProductMenu with cleanWfo: $cleanWfo") // Added log
-                    if (cleanWfo.isNotBlank()) {
-                        navController.navigate(Screen.ProductMenu.createRoute(cleanWfo))
-                    } else {
-                        Log.w("ActionButtons", "Cleaned WFO is blank, cannot navigate to ProductMenu.")
-                    }
-                } ?: run {
-                    Log.w("ActionButtons", "radarWfo is null, cannot navigate to ProductMenu.")
-                }
-            },
-            // Disable FAB if radarWfo is null or empty
-            enabled = radarWfo != null && radarWfo.removePrefix("K").isNotBlank(),
+        // FAB for Weather Products
+        androidx.compose.material3.FloatingActionButton(
+            onClick = productFabOnClick, // Use the conditional onClick
+            containerColor = productFabContainerColor, // Use the conditional color
+            contentColor = Color.White
+        ) {
+            androidx.compose.material3.Icon(Icons.Default.Description, "Weather Products")
+        }
+        // FAB for User Settings (always enabled)
+        androidx.compose.material3.FloatingActionButton(
+            onClick = { navController.navigate(Screen.Settings.route) },
             containerColor = MaterialTheme.colorScheme.secondary,
             contentColor = Color.White
         ) {
-            Icon(Icons.Default.Description, "Weather Products")
+            androidx.compose.material3.Icon(Icons.Default.Settings, "User Settings")
         }
-        FloatingActionButton(
-            onClick = { navController.navigate(Screen.Settings.route) }, // Navigate to Settings Screen
-            containerColor = MaterialTheme.colorScheme.secondary,
+        // FAB for Make Report (always enabled)
+        androidx.compose.material3.FloatingActionButton(
+            onClick = { navController.navigate(Screen.MakeReport.route) },
+            containerColor = MaterialTheme.colorScheme.primary,
             contentColor = Color.White
         ) {
-            Icon(Icons.Default.Settings, "User Settings")
-        }
-        FloatingActionButton(onClick = { navController.navigate(Screen.MakeReport.route) }, containerColor = MaterialTheme.colorScheme.primary, contentColor = Color.White) {
-            Icon(Icons.Default.AddAPhoto, "Make Report")
+            androidx.compose.material3.Icon(Icons.Default.AddAPhoto, "Make Report")
         }
     }
 }
 
 /**
- * Helper class to create and cache custom marker icons for the map.
+ * Helper function to create and cache custom marker icons for the map.
  * Each icon combines a base weather pin with an emoji representing the report type,
  * and is rotated to show the direction the photo was taken.
  */
@@ -1283,8 +1295,9 @@ fun MainScreenPreview() {
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 MapTypeSelector(currentMapType = MapType.NORMAL, onMapTypeSelected = {})
-                ActionButtons(navController = rememberNavController())
+                ActionButtons(navController = rememberNavController(), radarWfo = "KTBW") // Provide a dummy WFO for preview
             }
         }
     }
 }
+

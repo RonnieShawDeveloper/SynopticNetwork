@@ -56,7 +56,7 @@ import java.util.Locale
  *
  * @param navController The navigation controller.
  * @param productCode The 3-letter product code (e.g., "AFD", "CF6") passed as a navigation argument.
- * @param wfo The 3-letter WFO identifier (e.g., "TBW") passed as a navigation argument.
+ * @param officeCode The 3-letter WFO identifier (e.g., "TBW") passed as a navigation argument.
  * @param productDetailViewModel The ViewModel for this screen.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -64,14 +64,14 @@ import java.util.Locale
 fun ProductDetailScreen(
     navController: NavHostController,
     productCode: String,
-    wfo: String,
+    officeCode: String, // MODIFIED: Changed parameter name
     productDetailViewModel: ProductDetailViewModel = viewModel()
 ) {
     val uiState by productDetailViewModel.uiState.collectAsState()
 
     // Fetch product detail when the screen is first composed or arguments change
-    LaunchedEffect(productCode, wfo) {
-        productDetailViewModel.fetchProductDetail(productCode, wfo)
+    LaunchedEffect(productCode, officeCode) { // MODIFIED: Depend on officeCode
+        productDetailViewModel.fetchProductDetail(productCode, officeCode) // MODIFIED: Pass officeCode
     }
 
     Scaffold(
@@ -184,7 +184,7 @@ private fun ProductContent(product: NwsProductDetailResponse) {
 private fun formatProductTimestamp(isoTimestamp: String): String {
     return try {
         val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US)
-        val formatter = SimpleDateFormat("MMM dd, yyyy HH:mm z", Locale.US)
+        val formatter = SimpleDateFormat("MMM dd,yyyy HH:mm z", Locale.US)
         formatter.format(parser.parse(isoTimestamp) ?: Date())
     } catch (e: Exception) {
         e.printStackTrace()
@@ -211,6 +211,7 @@ fun ProductDetailScreenPreview() {
         LaunchedEffect(Unit) {
             mockViewModel._uiState.value = mockViewModel.uiState.value.copy(productDetail = mockProduct)
         }
-        ProductDetailScreen(navController = rememberNavController(), productCode = "AFD", wfo = "TBW", productDetailViewModel = mockViewModel)
+        ProductDetailScreen(navController = rememberNavController(), productCode = "AFD", officeCode = "TBW", productDetailViewModel = mockViewModel)
     }
 }
+
