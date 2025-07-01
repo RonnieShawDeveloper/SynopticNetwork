@@ -43,7 +43,7 @@ private const val MIN_SPREAD_ZOOM = 16f
 private const val MAX_SPREAD_ZOOM = 18f
 private const val GEOHASH_PRECISION_FOR_GROUPING = 7 // Street-level precision (35 bits)
 private const val GEOHASH_PRECISION_FOR_AREA_LOADING = 3 // Area-level precision (15 bits)
-private const val RADAR_POLLING_INTERVAL_SECONDS = 300L // Poll every 5 minutes (300 seconds)
+private const val RADAR_POLLING_INTERVAL_SECONDS = 60L // Poll every 1 minutes (60 seconds)
 
 // Sealed class to represent different types of markers displayed on the map
 sealed class DisplayMarker {
@@ -87,7 +87,7 @@ data class MapState(
     val latestRadarTimestamp: String? = null, // Latest available radar timestamp from GetCapabilities
     val isReflectivityRadarActive: Boolean = false, // State for reflectivity radar overlay
     val isVelocityRadarActive: Boolean = false, // State for velocity radar overlay
-    val lastRadarUpdateTimeString: String? = null // NEW: Formatted string for last radar update time
+    val lastRadarUpdateTimeString: String? = null // Formatted string for last radar update time
 )
 
 // Initialize the filters with all types set to true (visible)
@@ -493,17 +493,29 @@ class MainViewModel : ViewModel() {
 
     /**
      * Toggles the state of the reflectivity radar overlay and manages polling.
+     * Ensures mutual exclusivity with velocity radar.
      */
     fun onReflectivityRadarToggled(newValue: Boolean) {
-        _mapState.update { it.copy(isReflectivityRadarActive = newValue) }
+        _mapState.update { currentState ->
+            currentState.copy(
+                isReflectivityRadarActive = newValue,
+                isVelocityRadarActive = if (newValue) false else currentState.isVelocityRadarActive // Turn off velocity if reflectivity is turned on
+            )
+        }
         manageRadarPollingJob()
     }
 
     /**
      * Toggles the state of the velocity radar overlay and manages polling.
+     * Ensures mutual exclusivity with reflectivity radar.
      */
     fun onVelocityRadarToggled(newValue: Boolean) {
-        _mapState.update { it.copy(isVelocityRadarActive = newValue) }
+        _mapState.update { currentState ->
+            currentState.copy(
+                isVelocityRadarActive = newValue,
+                isReflectivityRadarActive = if (newValue) false else currentState.isReflectivityRadarActive // Turn off reflectivity if velocity is turned on
+            )
+        }
         manageRadarPollingJob()
     }
 

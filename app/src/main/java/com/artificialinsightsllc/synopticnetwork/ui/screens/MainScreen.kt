@@ -15,6 +15,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -133,6 +134,8 @@ import com.google.android.gms.maps.model.CameraPosition
 import com.artificialinsightsllc.synopticnetwork.data.services.RadarTileProvider
 import okhttp3.OkHttpClient
 import androidx.compose.ui.text.style.TextAlign // Import TextAlign
+import androidx.compose.ui.unit.TextUnit // Import TextUnit
+import androidx.compose.ui.unit.sp // Import sp for TextUnit
 
 
 /**
@@ -394,6 +397,7 @@ fun MainScreen(
                             RadarTileProvider(radarOfficeCodeForTileProvider, okHttpClient, mapState.latestRadarTimestamp, reflectivityLayerName)
                         },
                         fadeIn = true,
+                        transparency = 0.25f, // Set transparency to 25% (75% opaque)
                         zIndex = 0f // Set zIndex to 0f for radar overlay
                     )
                 }
@@ -410,6 +414,7 @@ fun MainScreen(
                             RadarTileProvider(radarOfficeCodeForTileProvider, okHttpClient, mapState.latestRadarTimestamp, velocityLayerName)
                         },
                         fadeIn = true,
+                        transparency = 0.25f, // Set transparency to 25% (75% opaque)
                         zIndex = 1f // Set zIndex to 1f for velocity radar (above reflectivity, below alerts)
                     )
                 }
@@ -434,14 +439,16 @@ fun MainScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Top
             ) {
-                // Legend FAB
-                androidx.compose.material3.FloatingActionButton(
+                // Legend FAB with "FILTERS" Badge
+                FabWithBadge(
                     onClick = { showLegendSheet = true },
+                    icon = { Icon(Icons.Default.Layers, contentDescription = "Map Legend") },
+                    contentDescription = "Map Legend",
+                    badgeText = "FILTERS",
                     containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                     contentColor = MaterialTheme.colorScheme.onTertiaryContainer
-                ) {
-                    androidx.compose.material3.Icon(Icons.Default.Layers, contentDescription = "Map Legend")
-                }
+                )
+
                 // Map Type Selector
                 MapTypeSelector(
                     currentMapType = mapState.mapProperties.mapType,
@@ -458,27 +465,29 @@ fun MainScreen(
                 horizontalArrangement = Arrangement.SpaceBetween, // Distribute items horizontally
                 verticalAlignment = Alignment.Bottom // Align items to the bottom
             ) {
-                // Alerts FAB with Badge (Left)
-                androidx.compose.material3.FloatingActionButton(
+                // Alerts FAB with "ALERTS" Badge (Left)
+                FabWithBadge(
                     onClick = { showAlertsSheet = true },
-                    containerColor = getAlertsFabColor(mapState.highestSeverity),
-                    contentColor = Color.White,
-                    // No bottom padding needed here, as windowInsetsPadding handles it for the parent Column
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        androidx.compose.material3.Icon(Icons.Default.Info, contentDescription = "Active Alerts")
-                        if (mapState.activeAlerts.size > 0) {
-                            Badge(
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .offset(x = 10.dp, y = (-10).dp),
-                                containerColor = MaterialTheme.colorScheme.error
-                            ) {
-                                Text(mapState.activeAlerts.size.toString())
+                    icon = {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.Info, contentDescription = "Active Alerts")
+                            if (mapState.activeAlerts.size > 0) {
+                                Badge(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .offset(x = 10.dp, y = (-10).dp),
+                                    containerColor = MaterialTheme.colorScheme.error
+                                ) {
+                                    Text(mapState.activeAlerts.size.toString())
+                                }
                             }
                         }
-                    }
-                }
+                    },
+                    contentDescription = "Active Alerts",
+                    badgeText = "ALERTS",
+                    containerColor = getAlertsFabColor(mapState.highestSeverity),
+                    contentColor = Color.White
+                )
 
                 // Radar Last Updated Badge (Conditional Visibility) - CENTERED BETWEEN FABs
                 if ((mapState.isReflectivityRadarActive || mapState.isVelocityRadarActive) && mapState.latestRadarTimestamp != null) {
@@ -486,8 +495,8 @@ fun MainScreen(
                         shape = RoundedCornerShape(8.dp),
                         colors = CardDefaults.cardColors(containerColor = Transparent_Black),
                         modifier = Modifier
-                            .align(Alignment.Bottom) // Changed to Alignment.Bottom
-                            .weight(1f) // Take up available space
+                            .align(Alignment.Bottom) // Aligns the bottom of the card to the bottom of the Row
+                            .weight(1f) // Takes up available space horizontally
                             .padding(horizontal = 8.dp) // Add horizontal padding to separate from FABs
                     ) {
                         Text(
@@ -495,7 +504,7 @@ fun MainScreen(
                             color = Color.White,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
-                            textAlign = TextAlign.Center, // Corrected: Use TextAlign.Center
+                            textAlign = TextAlign.Center, // Centers the text horizontally within the Card
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 12.dp, vertical = 6.dp)
@@ -523,6 +532,54 @@ fun MainScreen(
         }
     }
 }
+
+/**
+ * NEW: Reusable Composable for a Floating Action Button with a text badge.
+ */
+@Composable
+fun FabWithBadge(
+    onClick: () -> Unit,
+    icon: @Composable () -> Unit,
+    contentDescription: String,
+    badgeText: String,
+    containerColor: Color,
+    contentColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Box(modifier = modifier.width(80.dp)) { // Fixed width for the entire FAB + Badge composite
+        FloatingActionButton(
+            onClick = onClick,
+            containerColor = containerColor,
+            contentColor = contentColor,
+            modifier = Modifier.align(Alignment.Center) // Center FAB within the Box
+        ) {
+            icon()
+        }
+
+        // Badge Text
+        Card(
+            shape = RoundedCornerShape(8.dp), // More rounding
+            colors = CardDefaults.cardColors(containerColor = containerColor), // Match FAB color
+            modifier = Modifier
+                .align(Alignment.BottomCenter) // Horizontally centered, bottom of badge aligned with bottom of Box
+                // .offset(y = (-4).dp) // Removed offset
+                .fillMaxWidth() // Fill the width of the parent Box (80.dp)
+        ) {
+            Text(
+                text = badgeText,
+                color = Color.White,
+                fontSize = 10.sp, // Set font size
+                lineHeight = 10.sp, // Set line height
+                fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth() // Ensure text fills card width
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
+            )
+        }
+    }
+}
+
 
 /**
  * Helper function to convert a full Report object to a MapReport object.
@@ -1150,53 +1207,60 @@ private fun ActionButtons(
 
     Column(modifier = modifier, horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(16.dp)) {
         // FAB for Reflectivity Radar Toggle
-        androidx.compose.material3.FloatingActionButton(
+        FabWithBadge(
             onClick = {
                 val newState = !showReflectivityRadarOverlay
-                onToggleReflectivityRadarOverlay(newState) // Call ViewModel function
+                onToggleReflectivityRadarOverlay(newState)
             },
+            icon = { Icon(Icons.Default.Satellite, "Toggle Reflectivity Radar") },
+            contentDescription = "Toggle Reflectivity Radar",
+            badgeText = "RADAR",
             containerColor = if (showReflectivityRadarOverlay) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
             contentColor = Color.White
-        ) {
-            androidx.compose.material3.Icon(Icons.Default.Satellite, "Toggle Reflectivity Radar")
-        }
+        )
 
         // FAB for Velocity Radar Toggle
-        androidx.compose.material3.FloatingActionButton(
+        FabWithBadge(
             onClick = {
                 val newState = !showVelocityRadarOverlay
-                onToggleVelocityRadarOverlay(newState) // Call ViewModel function
+                onToggleVelocityRadarOverlay(newState)
             },
+            icon = { Icon(Icons.Default.Streetview, "Toggle Velocity Radar") },
+            contentDescription = "Toggle Velocity Radar",
+            badgeText = "VELOCITY",
             containerColor = if (showVelocityRadarOverlay) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
             contentColor = Color.White
-        ) {
-            androidx.compose.material3.Icon(Icons.Default.Streetview, "Toggle Velocity Radar")
-        }
+        )
 
         // FAB for Weather Products
-        androidx.compose.material3.FloatingActionButton(
-            onClick = productFabOnClick, // Use the conditional onClick
-            containerColor = productFabContainerColor, // Use the conditional color
+        FabWithBadge(
+            onClick = productFabOnClick,
+            icon = { Icon(Icons.Default.Description, "Weather Products") },
+            contentDescription = "Weather Products",
+            badgeText = "PRODUCTS",
+            containerColor = productFabContainerColor,
             contentColor = Color.White
-        ) {
-            androidx.compose.material3.Icon(Icons.Default.Description, "Weather Products")
-        }
+        )
+
         // FAB for User Settings (always enabled)
-        androidx.compose.material3.FloatingActionButton(
+        FabWithBadge(
             onClick = { navController.navigate(Screen.Settings.route) },
+            icon = { Icon(Icons.Default.Settings, "User Settings") },
+            contentDescription = "User Settings",
+            badgeText = "SETTINGS",
             containerColor = MaterialTheme.colorScheme.secondary,
             contentColor = Color.White
-        ) {
-            androidx.compose.material3.Icon(Icons.Default.Settings, "User Settings")
-        }
+        )
+
         // FAB for Make Report (always enabled)
-        androidx.compose.material3.FloatingActionButton(
+        FabWithBadge(
             onClick = { navController.navigate(Screen.MakeReport.route) },
+            icon = { Icon(Icons.Default.AddAPhoto, "Make Report") },
+            contentDescription = "Make Report",
+            badgeText = "REPORT",
             containerColor = MaterialTheme.colorScheme.primary,
             contentColor = Color.White
-        ) {
-            androidx.compose.material3.Icon(Icons.Default.AddAPhoto, "Make Report")
-        }
+        )
     }
 }
 
