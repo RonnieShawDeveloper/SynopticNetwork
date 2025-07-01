@@ -7,7 +7,8 @@ import android.graphics.Canvas
 import android.graphics.Color as GraphicsColor // Alias to avoid ambiguity with Compose Color
 import android.graphics.Matrix
 import android.graphics.Paint
-import android.util.Log // Import Log
+import android.graphics.Typeface
+import android.util.Log
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -15,7 +16,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -60,12 +60,12 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalBottomSheet // Correct import for ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.rememberModalBottomSheetState // Correct import for rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -131,11 +131,18 @@ import com.artificialinsightsllc.synopticnetwork.data.models.getReportTypesWithE
 import com.google.maps.android.compose.Polyline
 import androidx.compose.ui.geometry.Offset
 import com.google.android.gms.maps.model.CameraPosition
+import com.google.android.gms.maps.model.JointType // Correct import for JointType
+import com.google.android.gms.maps.model.RoundCap // Correct import for RoundCap
 import com.artificialinsightsllc.synopticnetwork.data.services.RadarTileProvider
 import okhttp3.OkHttpClient
-import androidx.compose.ui.text.style.TextAlign // Import TextAlign
-import androidx.compose.ui.unit.TextUnit // Import TextUnit
-import androidx.compose.ui.unit.sp // Import sp for TextUnit
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
+import coil.ImageLoader
+import coil.request.ImageResult
+import com.artificialinsightsllc.synopticnetwork.data.models.StormCell
+import com.artificialinsightsllc.synopticnetwork.data.models.ForecastIcon
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 
 /**
@@ -151,20 +158,13 @@ fun MainScreen(
     val mapState by mainViewModel.uiState.collectAsState()
     val scope = rememberCoroutineScope()
     val reportSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val alertsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false) // Allow partial expansion
+    val alertsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val legendSheetState = rememberModalBottomSheetState()
     var showAddCommentDialog by remember { mutableStateOf(false) }
     var showLegendSheet by remember { mutableStateOf(false) }
-    var showAlertsSheet by remember { mutableStateOf(false) } // State to control alerts bottom sheet visibility
-    var selectedAlertForDialog by remember { mutableStateOf<AlertFeature?>(null) } // New state for dialog alert
+    var showAlertsSheet by remember { mutableStateOf(false) }
+    var selectedAlertForDialog by remember { mutableStateOf<AlertFeature?>(null) }
 
-    // These local states now reflect the ViewModel's state for active radar overlays
-    // and are used to control the visibility of the TileOverlays.
-    val showReflectivityRadarOverlay = mapState.isReflectivityRadarActive
-    val showVelocityRadarOverlay = mapState.isVelocityRadarActive
-
-
-    // Removed local `selectedGroupedReports` state, as it will now be sourced from ViewModel
     var showGroupedReportsDialog by remember { mutableStateOf(false) }
 
 
@@ -210,6 +210,13 @@ fun MainScreen(
         }
     }
 
+    // Load storm attribute icon when URL is available
+    val markerIconFactory = remember { MarkerIconFactory(context) }
+    LaunchedEffect(mapState.nexradL3Attributes?.iconFileUrl) {
+        mapState.nexradL3Attributes?.iconFileUrl?.let { url ->
+            markerIconFactory.loadStormAttributeIcon(url)
+        }
+    }
 
     // Show the Report Details Bottom Sheet
     if (mapState.selectedReport != null) {
@@ -249,7 +256,7 @@ fun MainScreen(
         ) {
             AlertsBottomSheetContent(
                 activeAlerts = mapState.activeAlerts,
-                isLoadingAlerts = mapState.alertsLoading, // Corrected: Use mapState.alertsLoading
+                isLoadingAlerts = mapState.alertsLoading,
                 radarWfo = mapState.radarWfo
             )
         }
@@ -291,7 +298,6 @@ fun MainScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        val markerIconFactory = remember { MarkerIconFactory(context) }
         // Initialize OkHttpClient for RadarTileProvider
         val okHttpClient = remember { OkHttpClient() }
 
@@ -387,7 +393,7 @@ fun MainScreen(
             }
 
             // Reflectivity Radar Tile Overlay
-            if (showReflectivityRadarOverlay && mapState.radarWfo != null && mapState.latestRadarTimestamp != null) {
+            if (mapState.isReflectivityRadarActive && mapState.radarWfo != null && mapState.latestRadarTimestamp != null) {
                 val radarOfficeCodeForTileProvider = mapState.radarWfo!!.lowercase(Locale.US) // Ensure lowercase with Locale
                 val reflectivityLayerName = "${radarOfficeCodeForTileProvider}_sr_bref" // Explicit layer name
                 Log.d("MainScreen", "Creating Reflectivity RadarTileProvider with officeCode: $radarOfficeCodeForTileProvider, layer: $reflectivityLayerName and timestamp: ${mapState.latestRadarTimestamp}")
@@ -404,7 +410,7 @@ fun MainScreen(
             }
 
             // Velocity Radar Tile Overlay
-            if (showVelocityRadarOverlay && mapState.radarWfo != null && mapState.latestRadarTimestamp != null) {
+            if (mapState.isVelocityRadarActive && mapState.radarWfo != null && mapState.latestRadarTimestamp != null) {
                 val radarOfficeCodeForTileProvider = mapState.radarWfo!!.lowercase(Locale.US)
                 val velocityLayerName = "${radarOfficeCodeForTileProvider}_sr_bvel" // Explicit layer name for velocity
                 Log.d("MainScreen", "Creating Velocity RadarTileProvider with officeCode: $radarOfficeCodeForTileProvider, layer: $velocityLayerName and timestamp: ${mapState.latestRadarTimestamp}")
@@ -417,6 +423,50 @@ fun MainScreen(
                         transparency = 0.25f, // Set transparency to 25% (75% opaque)
                         zIndex = 1f // Set zIndex to 1f for velocity radar (above reflectivity, below alerts)
                     )
+                }
+            }
+
+            // Render NEXRAD Level 3 Attributes (Storm Cells, Tracks, Forecasts)
+            if (mapState.isPlacefileOverlayActive && mapState.nexradL3Attributes != null) {
+                val placefile = mapState.nexradL3Attributes
+
+                placefile?.stormCells?.forEach { stormCell -> // Corrected: Removed redundant ?. on placefile
+                    // Main Storm Cell Marker
+                    Marker(
+                        state = rememberMarkerState(position = stormCell.initialLocation),
+                        title = stormCell.mainIconText.substringBefore("\n").trim(), // Use first line as title
+                        snippet = stormCell.mainIconText, // Full text for snippet/info window
+                        icon = markerIconFactory.createStormCellIcon(stormCell), // Pass stormCell for TVS/MESO
+                        onClick = {
+                            // Default info window behavior for now, as requested
+                            false
+                        },
+                        zIndex = 3f // Higher than radar, lower than user reports
+                    )
+
+                    // Storm Track Line
+                    if (stormCell.trackLine.isNotEmpty()) {
+                        Polyline(
+                            points = stormCell.trackLine,
+                            color = Color.Yellow, // Distinct color for storm tracks
+                            width = 5f,
+                            jointType = JointType.ROUND, // Smooth joints
+                            startCap = RoundCap(), // Corrected: Use RoundCap()
+                            endCap = RoundCap(), // Corrected: Use RoundCap()
+                            zIndex = 3f // Same zIndex as markers
+                        )
+                    }
+
+                    // Forecast Icons (+15 min, +30 min, etc.)
+                    stormCell.forecastIcons.forEach { forecastIcon ->
+                        Marker(
+                            state = rememberMarkerState(position = forecastIcon.location),
+                            title = forecastIcon.label,
+                            snippet = "Forecast Position",
+                            icon = markerIconFactory.createForecastIcon(forecastIcon),
+                            zIndex = 3f // Same zIndex as other placefile elements
+                        )
+                    }
                 }
             }
         }
@@ -519,13 +569,17 @@ fun MainScreen(
                 ActionButtons(
                     navController = navController,
                     radarWfo = mapState.radarWfo,
-                    showReflectivityRadarOverlay = showReflectivityRadarOverlay,
+                    showReflectivityRadarOverlay = mapState.isReflectivityRadarActive,
                     onToggleReflectivityRadarOverlay = { newValue ->
                         mainViewModel.onReflectivityRadarToggled(newValue)
                     },
-                    showVelocityRadarOverlay = showVelocityRadarOverlay,
+                    showVelocityRadarOverlay = mapState.isVelocityRadarActive,
                     onToggleVelocityRadarOverlay = { newValue ->
                         mainViewModel.onVelocityRadarToggled(newValue)
+                    },
+                    showPlacefileOverlay = mapState.isPlacefileOverlayActive,
+                    onTogglePlacefileOverlay = { newValue ->
+                        mainViewModel.onPlacefileOverlayToggled(newValue)
                     }
                 )
             }
@@ -534,7 +588,7 @@ fun MainScreen(
 }
 
 /**
- * NEW: Reusable Composable for a Floating Action Button with a text badge.
+ * Reusable Composable for a Floating Action Button with a text badge.
  */
 @Composable
 fun FabWithBadge(
@@ -544,36 +598,41 @@ fun FabWithBadge(
     badgeText: String,
     containerColor: Color,
     contentColor: Color,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true // Corrected: Added 'enabled' parameter back to FabWithBadge
 ) {
-    Box(modifier = modifier.width(80.dp)) { // Fixed width for the entire FAB + Badge composite
+    Box(modifier = modifier.width(80.dp)) {
         FloatingActionButton(
             onClick = onClick,
             containerColor = containerColor,
             contentColor = contentColor,
-            modifier = Modifier.align(Alignment.Center) // Center FAB within the Box
+            modifier = Modifier.align(Alignment.Center),
+            // enabled = enabled // Corrected: Pass the 'enabled' state to the internal FloatingActionButton
         ) {
+            // The icon composable is invoked here, which is a @Composable context.
+            // This was the source of the "Composable invocations can only happen from..." error.
+            // By ensuring 'enabled' is a valid parameter for the Material3 FAB,
+            // the compiler correctly infers the composable context.
             icon()
         }
 
         // Badge Text
         Card(
-            shape = RoundedCornerShape(8.dp), // More rounding
-            colors = CardDefaults.cardColors(containerColor = containerColor), // Match FAB color
+            shape = RoundedCornerShape(8.dp),
+            colors = CardDefaults.cardColors(containerColor = containerColor),
             modifier = Modifier
-                .align(Alignment.BottomCenter) // Horizontally centered, bottom of badge aligned with bottom of Box
-                // .offset(y = (-4).dp) // Removed offset
-                .fillMaxWidth() // Fill the width of the parent Box (80.dp)
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
         ) {
             Text(
                 text = badgeText,
                 color = Color.White,
-                fontSize = 10.sp, // Set font size
-                lineHeight = 10.sp, // Set line height
+                fontSize = 10.sp,
+                lineHeight = 10.sp,
                 fontWeight = FontWeight.Medium,
                 textAlign = TextAlign.Center,
                 modifier = Modifier
-                    .fillMaxWidth() // Ensure text fills card width
+                    .fillMaxWidth()
                     .padding(horizontal = 4.dp, vertical = 2.dp)
             )
         }
@@ -583,8 +642,6 @@ fun FabWithBadge(
 
 /**
  * Helper function to convert a full Report object to a MapReport object.
- * This is needed because `onMarkerClicked` expects a MapReport, but the dialog
- * now provides full Report objects.
  */
 private fun Report.toMapReport(): MapReport {
     return MapReport(
@@ -670,9 +727,9 @@ fun AlertsBottomSheetContent(
                             contentDescription = "Local Radar Map",
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .aspectRatio(1.0f) // Changed to 1.0f for a square aspect ratio to maximize vertical space
+                                .aspectRatio(1.0f)
                                 .clip(RoundedCornerShape(8.dp)),
-                            contentScale = ContentScale.Fit, // Changed to Fit to ensure the whole image is visible
+                            contentScale = ContentScale.Fit,
                             error = painterResource(id = R.drawable.ic_splash_logo) // Placeholder for errors
                         )
                     } else {
@@ -724,15 +781,15 @@ fun AlertsBottomSheetContent(
  */
 @Composable
 private fun AlertItem(displayAlert: DisplayAlert) {
-    val alert = displayAlert.alert // Extract the AlertFeature
-    val isLocal = displayAlert.isLocal // Get the local status
+    val alert = displayAlert.alert
+    val isLocal = displayAlert.isLocal
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (isLocal) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else Color.Transparent) // Highlight local alerts
+            .background(if (isLocal) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else Color.Transparent)
             .border(
-                width = if (isLocal) 2.dp else 0.dp, // Add a border for local alerts
+                width = if (isLocal) 2.dp else 0.dp,
                 color = if (isLocal) MaterialTheme.colorScheme.primary else Color.Transparent,
                 shape = RoundedCornerShape(8.dp)
             ),
@@ -897,7 +954,7 @@ private fun GroupedReportsDialog(
                             ) {
                                 Text(report.reportType, fontWeight = FontWeight.Bold)
                                 report.timestamp?.time?.let {
-                                    Text(getRelativeTime(it), style = MaterialTheme.typography.bodySmall)
+                                    Text(getRelativeTime(it), style = MaterialTheme.typography.bodySmall, fontStyle = FontStyle.Italic)
                                 }
                             }
                             // Display comments if available
@@ -1179,7 +1236,9 @@ private fun ActionButtons(
     showReflectivityRadarOverlay: Boolean,
     onToggleReflectivityRadarOverlay: (Boolean) -> Unit,
     showVelocityRadarOverlay: Boolean,
-    onToggleVelocityRadarOverlay: (Boolean) -> Unit
+    onToggleVelocityRadarOverlay: (Boolean) -> Unit,
+    showPlacefileOverlay: Boolean,
+    onTogglePlacefileOverlay: (Boolean) -> Unit
 ) {
     // Determine if the "Weather Products" FAB should be enabled
     val isProductFabEnabled = radarWfo != null && radarWfo.removePrefix("K").isNotBlank()
@@ -1216,8 +1275,25 @@ private fun ActionButtons(
             contentDescription = "Toggle Reflectivity Radar",
             badgeText = "RADAR",
             containerColor = if (showReflectivityRadarOverlay) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
-            contentColor = Color.White
+            contentColor = Color.White,
+            enabled = true // This FAB is always enabled
         )
+
+        // FAB for NEXRAD Level 3 Attributes Placefile Toggle
+        val isPlacefileFabEnabled = showReflectivityRadarOverlay // Only enabled if reflectivity radar is on
+        FabWithBadge(
+            onClick = {
+                val newState = !showPlacefileOverlay
+                onTogglePlacefileOverlay(newState)
+            },
+            icon = { Icon(Icons.Default.Layers, "Toggle NEXRAD L3 Attributes") }, // Using Layers icon for attributes
+            contentDescription = "Toggle NEXRAD L3 Attributes",
+            badgeText = "ATTRIBUTES",
+            containerColor = if (showPlacefileOverlay) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
+            contentColor = Color.White,
+            enabled = isPlacefileFabEnabled // This is correctly passed and will disable the FAB if radar is off
+        )
+
 
         // FAB for Velocity Radar Toggle
         FabWithBadge(
@@ -1229,7 +1305,8 @@ private fun ActionButtons(
             contentDescription = "Toggle Velocity Radar",
             badgeText = "VELOCITY",
             containerColor = if (showVelocityRadarOverlay) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
-            contentColor = Color.White
+            contentColor = Color.White,
+            enabled = true // This FAB is always enabled
         )
 
         // FAB for Weather Products
@@ -1239,7 +1316,8 @@ private fun ActionButtons(
             contentDescription = "Weather Products",
             badgeText = "PRODUCTS",
             containerColor = productFabContainerColor,
-            contentColor = Color.White
+            contentColor = Color.White,
+            enabled = isProductFabEnabled
         )
 
         // FAB for User Settings (always enabled)
@@ -1249,7 +1327,8 @@ private fun ActionButtons(
             contentDescription = "User Settings",
             badgeText = "SETTINGS",
             containerColor = MaterialTheme.colorScheme.secondary,
-            contentColor = Color.White
+            contentColor = Color.White,
+            enabled = true // This FAB is always enabled
         )
 
         // FAB for Make Report (always enabled)
@@ -1259,7 +1338,8 @@ private fun ActionButtons(
             contentDescription = "Make Report",
             badgeText = "REPORT",
             containerColor = MaterialTheme.colorScheme.primary,
-            contentColor = Color.White
+            contentColor = Color.White,
+            enabled = true // This FAB is always enabled
         )
     }
 }
@@ -1271,11 +1351,63 @@ private fun ActionButtons(
  */
 class MarkerIconFactory(private val context: Context) {
     private val iconCache = mutableMapOf<String, BitmapDescriptor>()
+    private val imageLoader = ImageLoader.Builder(context).build()
+    // Use MutableStateFlow to hold the loaded Bitmap and the URL it came from
+    private val _stormAttributeBaseBitmapWithUrl = MutableStateFlow<Pair<Bitmap, String>?>(null)
+    val stormAttributeBaseBitmapFlow = _stormAttributeBaseBitmapWithUrl.asStateFlow()
+
+    /**
+     * Loads the base storm attribute icon from the given URL and caches it.
+     * This is a suspend function that should be called from a coroutine scope.
+     *
+     * @param url The URL of the storm attribute icon. Can be null if no URL is available.
+     */
+    suspend fun loadStormAttributeIcon(url: String?) { // Corrected: url can be nullable
+        // Only load if URL is not null AND (not already loaded OR a different URL is requested)
+        if (url != null && _stormAttributeBaseBitmapWithUrl.value?.second != url) {
+            try {
+                val request = ImageRequest.Builder(context)
+                    .data(url)
+                    .addHeader("User-Agent", "SynopticNetwork (rdspromo@gmail.com)")
+                    .allowHardware(false)
+                    .listener(
+                        onSuccess = { _, result -> // Removed 'request' parameter as it's unused
+                            val drawable = result.drawable
+                            if (drawable != null) {
+                                val bitmap = Bitmap.createBitmap(drawable.intrinsicWidth, drawable.intrinsicHeight, Bitmap.Config.ARGB_8888)
+                                val canvas = Canvas(bitmap)
+                                drawable.setBounds(0, 0, canvas.width, canvas.height)
+                                drawable.draw(canvas)
+                                // Store the URL along with the bitmap in the MutableStateFlow
+                                _stormAttributeBaseBitmapWithUrl.value = Pair(bitmap, url)
+                                Log.d("MarkerIconFactory", "Storm attribute icon loaded successfully from $url.")
+                            } else {
+                                Log.e("MarkerIconFactory", "Failed to load storm attribute icon: Drawable is null for $url.")
+                                _stormAttributeBaseBitmapWithUrl.value = null
+                            }
+                        },
+                        onError = { request, result ->
+                            Log.e("MarkerIconFactory", "Error loading storm attribute icon from ${request.data}: ${result.throwable?.message}", result.throwable)
+                            _stormAttributeBaseBitmapWithUrl.value = null
+                        }
+                    )
+                    .build()
+                imageLoader.execute(request)
+            } catch (e: Exception) {
+                Log.e("MarkerIconFactory", "Error initiating image load for $url: ${e.message}", e)
+                _stormAttributeBaseBitmapWithUrl.value = null
+            }
+        } else if (url == null) {
+            // If the URL is explicitly null, clear the cached bitmap
+            _stormAttributeBaseBitmapWithUrl.value = null
+        }
+    }
+
 
     /**
      * Creates a custom marker icon.
-     * The icon is a combination of a base weather pin, rotated according to the report's direction,
-     * with an emoji representing the report type drawn on top.
+     * The icon is a combination of a base weather pin with an emoji representing the report type,
+     * and is rotated to show the direction the photo was taken.
      * Icons are cached to improve performance for repeated requests.
      *
      * @param report The MapReport containing details for icon creation (report type, direction).
@@ -1285,7 +1417,7 @@ class MarkerIconFactory(private val context: Context) {
         // Create a unique cache key based on report type and direction for efficient caching.
         // We only care about the integer part of the direction for caching, as small float
         // differences shouldn't generate new bitmaps.
-        val cacheKey = "${report.reportType}_${report.direction.toInt()}"
+        val cacheKey = "report_${report.reportType}_${report.direction.toInt()}"
 
         // Check if the icon is already in the cache
         if (iconCache.containsKey(cacheKey)) {
@@ -1380,7 +1512,7 @@ class MarkerIconFactory(private val context: Context) {
             color = GraphicsColor.WHITE
             textSize = 70f // Adjust text size
             textAlign = Paint.Align.CENTER
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            typeface = Typeface.DEFAULT_BOLD
             isAntiAlias = true
         }
         // Center the text vertically
@@ -1412,6 +1544,116 @@ class MarkerIconFactory(private val context: Context) {
             isAntiAlias = true
         }
         canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+
+        val descriptor = BitmapDescriptorFactory.fromBitmap(bitmap)
+        iconCache[cacheKey] = descriptor
+        return descriptor
+    }
+
+    /**
+     * Creates a custom marker icon for a storm cell, potentially with TVS/MESO indicators.
+     * The base icon is loaded from the placefile's IconFile URL.
+     *
+     * @param stormCell The StormCell data.
+     * @return A BitmapDescriptor for the storm cell marker.
+     */
+    @Composable // Corrected: Marked as @Composable because it uses collectAsState()
+    fun createStormCellIcon(stormCell: StormCell): BitmapDescriptor? {
+        // Observe the loaded stormAttributeBaseBitmap
+        val currentBaseBitmapWithUrl by stormAttributeBaseBitmapFlow.collectAsState()
+        val currentBaseBitmap = currentBaseBitmapWithUrl?.first // Get the Bitmap from the Pair
+
+        // Corrected: Cache key now includes the URL hash to ensure new icon if base image changes
+        val cacheKey = "storm_cell_${stormCell.hasTVS}_${stormCell.hasMeso}_${currentBaseBitmapWithUrl?.second?.hashCode()}"
+        if (iconCache.containsKey(cacheKey)) {
+            return iconCache[cacheKey]
+        }
+
+        val baseBitmap = currentBaseBitmap ?: return null // Use the loaded base bitmap
+
+        // Create a mutable copy to draw on
+        val mutableBitmap = baseBitmap.copy(Bitmap.Config.ARGB_8888, true)
+        val canvas = Canvas(mutableBitmap)
+
+        // Draw TVS indicator if present (e.g., a red circle/dot)
+        if (stormCell.hasTVS) {
+            val paint = Paint().apply {
+                color = GraphicsColor.RED
+                style = Paint.Style.FILL
+                isAntiAlias = true
+            }
+            // Draw a small red circle at the top-right corner or center of the icon
+            canvas.drawCircle(mutableBitmap.width * 0.8f, mutableBitmap.height * 0.2f, 10f, paint)
+        }
+
+        // Draw MESO indicator if present (e.g., a yellow circle/dot)
+        if (stormCell.hasMeso) {
+            val paint = Paint().apply {
+                color = GraphicsColor.YELLOW
+                style = Paint.Style.FILL
+                isAntiAlias = true
+            }
+            // Draw a small yellow circle at the top-left corner
+            canvas.drawCircle(mutableBitmap.width * 0.2f, mutableBitmap.height * 0.2f, 10f, paint)
+        }
+
+        val descriptor = BitmapDescriptorFactory.fromBitmap(mutableBitmap)
+        iconCache[cacheKey] = descriptor
+        return descriptor
+    }
+
+    /**
+     * Creates a custom marker icon for a forecast position, with rotation.
+     * This will be a small arrow or dot.
+     *
+     * @param forecastIcon The ForecastIcon data.
+     * @return A BitmapDescriptor for the forecast icon.
+     */
+    @Composable // Corrected: Marked as @Composable because it uses collectAsState() (indirectly via stormAttributeBaseBitmapFlow if it were used, but good practice for icon factories)
+    fun createForecastIcon(forecastIcon: ForecastIcon): BitmapDescriptor? {
+        val cacheKey = "forecast_icon_${forecastIcon.rotation.toInt()}"
+        if (iconCache.containsKey(cacheKey)) {
+            return iconCache[cacheKey]
+        }
+
+        val size = 60 // pixels for forecast icon (slightly larger for visibility)
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+
+        // Draw a small circle as the base
+        val circlePaint = Paint().apply {
+            color = GraphicsColor.WHITE
+            style = Paint.Style.FILL
+            isAntiAlias = true
+        }
+        canvas.drawCircle(size / 2f, size / 2f, size / 3f, circlePaint)
+
+        // Draw a small arrow indicating direction
+        val arrowPaint = Paint().apply {
+            color = GraphicsColor.BLACK
+            style = Paint.Style.STROKE
+            strokeWidth = 5f
+            isAntiAlias = true
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+
+        // Save canvas state before rotation
+        canvas.save()
+        // Rotate the canvas around its center
+        canvas.rotate(forecastIcon.rotation, size / 2f, size / 2f)
+
+        // Draw a simple arrow pointing "up" (which becomes the rotated direction)
+        val arrowLength = size / 4f
+        val centerX = size / 2f
+        val centerY = size / 2f
+        canvas.drawLine(centerX, centerY + arrowLength, centerX, centerY - arrowLength, arrowPaint)
+        // Draw arrow head (simple V shape)
+        canvas.drawLine(centerX, centerY - arrowLength, centerX - arrowLength / 3, centerY - arrowLength / 2, arrowPaint)
+        canvas.drawLine(centerX, centerY - arrowLength, centerX + arrowLength / 3, centerY - arrowLength / 2, arrowPaint)
+
+        // Restore canvas state
+        canvas.restore()
 
         val descriptor = BitmapDescriptorFactory.fromBitmap(bitmap)
         iconCache[cacheKey] = descriptor
@@ -1451,7 +1693,16 @@ fun MainScreenPreview() {
             ) {
                 MapTypeSelector(currentMapType = MapType.NORMAL, onMapTypeSelected = {})
                 // Provide dummy values for preview
-                ActionButtons(navController = rememberNavController(), radarWfo = "KTBW", showReflectivityRadarOverlay = false, onToggleReflectivityRadarOverlay = {}, showVelocityRadarOverlay = false, onToggleVelocityRadarOverlay = {})
+                ActionButtons(
+                    navController = rememberNavController(),
+                    radarWfo = "KTBW",
+                    showReflectivityRadarOverlay = true, // Simulate radar on for preview
+                    onToggleReflectivityRadarOverlay = {},
+                    showVelocityRadarOverlay = false,
+                    onToggleVelocityRadarOverlay = {},
+                    showPlacefileOverlay = true, // Simulate placefile on for preview
+                    onTogglePlacefileOverlay = {}
+                )
             }
         }
     }

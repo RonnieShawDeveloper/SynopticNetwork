@@ -10,9 +10,11 @@ import com.artificialinsightsllc.synopticnetwork.data.models.AlertFeature
 import com.artificialinsightsllc.synopticnetwork.data.models.AlertSeverity
 import com.artificialinsightsllc.synopticnetwork.data.models.Comment
 import com.artificialinsightsllc.synopticnetwork.data.models.MapReport
+import com.artificialinsightsllc.synopticnetwork.data.models.NexradL3AttributePlacefile // NEW: Import Placefile data model
 import com.artificialinsightsllc.synopticnetwork.data.models.Report
 import com.artificialinsightsllc.synopticnetwork.data.services.AuthService
 import com.artificialinsightsllc.synopticnetwork.data.services.NwsApiService
+import com.artificialinsightsllc.synopticnetwork.data.services.NexradL3AttributeService // NEW: Import Placefile service
 import com.artificialinsightsllc.synopticnetwork.data.services.ReportService
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.maps.model.LatLng
@@ -37,6 +39,7 @@ import kotlin.math.sin
 import ch.hsr.geohash.GeoHash
 import com.artificialinsightsllc.synopticnetwork.BuildConfig
 import com.artificialinsightsllc.synopticnetwork.data.services.UserService
+import okhttp3.OkHttpClient // NEW: Import OkHttpClient for PlacefileService
 
 // Define minimum and maximum zoom levels for our custom behavior
 private const val MIN_SPREAD_ZOOM = 16f
@@ -44,6 +47,7 @@ private const val MAX_SPREAD_ZOOM = 18f
 private const val GEOHASH_PRECISION_FOR_GROUPING = 7 // Street-level precision (35 bits)
 private const val GEOHASH_PRECISION_FOR_AREA_LOADING = 3 // Area-level precision (15 bits)
 private const val RADAR_POLLING_INTERVAL_SECONDS = 60L // Poll every 1 minutes (60 seconds)
+private const val PLACEFILE_DEFAULT_POLLING_INTERVAL_SECONDS = 30L // Default for placefile if not specified
 
 // Sealed class to represent different types of markers displayed on the map
 sealed class DisplayMarker {
@@ -87,7 +91,9 @@ data class MapState(
     val latestRadarTimestamp: String? = null, // Latest available radar timestamp from GetCapabilities
     val isReflectivityRadarActive: Boolean = false, // State for reflectivity radar overlay
     val isVelocityRadarActive: Boolean = false, // State for velocity radar overlay
-    val lastRadarUpdateTimeString: String? = null // Formatted string for last radar update time
+    val lastRadarUpdateTimeString: String? = null, // Formatted string for last radar update time
+    val nexradL3Attributes: NexradL3AttributePlacefile? = null, // NEW: State for parsed placefile data
+    val isPlacefileOverlayActive: Boolean = false // NEW: State for placefile overlay visibility
 )
 
 // Initialize the filters with all types set to true (visible)
@@ -113,11 +119,14 @@ class MainViewModel : ViewModel() {
     private val authService = AuthService()
     private val userService = UserService()
     private val nwsApiService = NwsApiService()
+    private val okHttpClient = OkHttpClient() // Re-use the same OkHttpClient for all services
+    private val nexradL3AttributeService = NexradL3AttributeService(okHttpClient) // NEW: Inject OkHttpClient
 
     private var commentsListenerJob: Job? = null
     private var alertsPollingJob: Job? = null
     private var reportsListenerJob: Job? = null // To manage the reports listener
     private var radarPollingJob: Job? = null // To manage the radar polling listener
+    private var placefilePollingJob: Job? = null // NEW: To manage the placefile polling listener
 
     init {
         // Fetch user profile (only screen name for now)
@@ -414,10 +423,10 @@ class MainViewModel : ViewModel() {
      */
     private fun manageRadarPollingJob() {
         val currentState = _mapState.value
-        val shouldPoll = currentState.isReflectivityRadarActive || currentState.isVelocityRadarActive
+        val shouldPollRadar = currentState.isReflectivityRadarActive || currentState.isVelocityRadarActive
         val radarWfo = currentState.radarWfo
 
-        if (shouldPoll && radarWfo != null) {
+        if (shouldPollRadar && radarWfo != null) {
             // Start polling if it's not already running and a radar WFO is available
             if (radarPollingJob == null || radarPollingJob?.isActive == false) {
                 Log.d("MainViewModel", "Starting radar polling.")
@@ -433,6 +442,8 @@ class MainViewModel : ViewModel() {
                 _mapState.update { it.copy(lastRadarUpdateTimeString = null) }
             }
         }
+        // Always call managePlacefilePollingJob when radar state changes
+        managePlacefilePollingJob()
     }
 
     /**
@@ -494,15 +505,17 @@ class MainViewModel : ViewModel() {
     /**
      * Toggles the state of the reflectivity radar overlay and manages polling.
      * Ensures mutual exclusivity with velocity radar.
+     * Also manages placefile overlay visibility.
      */
     fun onReflectivityRadarToggled(newValue: Boolean) {
         _mapState.update { currentState ->
             currentState.copy(
                 isReflectivityRadarActive = newValue,
-                isVelocityRadarActive = if (newValue) false else currentState.isVelocityRadarActive // Turn off velocity if reflectivity is turned on
+                isVelocityRadarActive = if (newValue) false else currentState.isVelocityRadarActive, // Turn off velocity if reflectivity is turned on
+                isPlacefileOverlayActive = if (newValue) currentState.isPlacefileOverlayActive else false // Turn off placefile if reflectivity is turned off
             )
         }
-        manageRadarPollingJob()
+        manageRadarPollingJob() // This will now also call managePlacefilePollingJob
     }
 
     /**
@@ -517,6 +530,78 @@ class MainViewModel : ViewModel() {
             )
         }
         manageRadarPollingJob()
+    }
+
+    /**
+     * NEW: Toggles the state of the NEXRAD Level 3 Attributes placefile overlay.
+     * This overlay can only be active when reflectivity radar is also active.
+     */
+    fun onPlacefileOverlayToggled(newValue: Boolean) {
+        _mapState.update { currentState ->
+            // Only allow activation if reflectivity radar is active
+            val actualNewValue = newValue && currentState.isReflectivityRadarActive
+            currentState.copy(isPlacefileOverlayActive = actualNewValue)
+        }
+        managePlacefilePollingJob()
+    }
+
+    /**
+     * NEW: Manages the lifecycle of the placefile polling job.
+     * It starts polling only if the placefile overlay is active AND reflectivity radar is active.
+     */
+    private fun managePlacefilePollingJob() {
+        val currentState = _mapState.value
+        val shouldPollPlacefile = currentState.isPlacefileOverlayActive && currentState.isReflectivityRadarActive
+        val radarWfo = currentState.radarWfo // Use the same WFO as radar
+
+        if (shouldPollPlacefile && radarWfo != null) {
+            if (placefilePollingJob == null || placefilePollingJob?.isActive == false) {
+                Log.d("MainViewModel", "Starting placefile polling for WFO: $radarWfo")
+                // Use the refresh interval from the placefile if available, otherwise default
+                val refreshInterval = currentState.nexradL3Attributes?.refreshInterval?.toLong() ?: PLACEFILE_DEFAULT_POLLING_INTERVAL_SECONDS
+                startPlacefilePolling(radarWfo, refreshInterval)
+            }
+        } else {
+            if (placefilePollingJob?.isActive == true) {
+                Log.d("MainViewModel", "Stopping placefile polling.")
+                placefilePollingJob?.cancel()
+                placefilePollingJob = null
+                // Clear placefile data when stopping the overlay
+                _mapState.update { it.copy(nexradL3Attributes = null) }
+            }
+        }
+    }
+
+    /**
+     * NEW: The actual coroutine for periodically fetching and parsing the placefile.
+     */
+    private fun startPlacefilePolling(radarWfo: String, refreshIntervalSeconds: Long) {
+        placefilePollingJob = viewModelScope.launch {
+            while (true) {
+                try {
+                    // The placefile URL uses the 3-letter radar ID, which is the WFO without the 'K' prefix
+                    val radarSiteId = radarWfo.removePrefix("K")
+                    if (radarSiteId.isNotBlank()) {
+                        val rawText = nexradL3AttributeService.fetchPlacefile(radarSiteId)
+                        if (rawText != null) {
+                            val parsedPlacefile = nexradL3AttributeService.parsePlacefile(rawText)
+                            _mapState.update { it.copy(nexradL3Attributes = parsedPlacefile) }
+                            Log.d("MainViewModel", "Successfully updated placefile data for $radarSiteId.")
+                        } else {
+                            Log.w("MainViewModel", "Failed to fetch raw placefile text for $radarSiteId.")
+                            _mapState.update { it.copy(nexradL3Attributes = null) } // Clear old data on fetch failure
+                        }
+                    } else {
+                        Log.w("MainViewModel", "Radar WFO is blank, cannot fetch placefile.")
+                        _mapState.update { it.copy(nexradL3Attributes = null) } // Clear data if WFO is invalid
+                    }
+                } catch (e: Exception) {
+                    Log.e("MainViewModel", "Error polling for placefile data: ${e.message}", e)
+                    _mapState.update { it.copy(nexradL3Attributes = null) } // Clear data on error
+                }
+                delay(refreshIntervalSeconds * 1000L)
+            }
+        }
     }
 
 
@@ -619,5 +704,6 @@ class MainViewModel : ViewModel() {
         commentsListenerJob?.cancel()
         reportsListenerJob?.cancel()
         radarPollingJob?.cancel() // Ensure radar polling job is cancelled
+        placefilePollingJob?.cancel() // NEW: Ensure placefile polling job is cancelled
     }
 }

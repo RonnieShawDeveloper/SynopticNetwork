@@ -54,9 +54,9 @@ fun SplashScreen(navController: NavHostController) {
     // This LaunchedEffect triggers the animation sequence and navigation logic
     // once the composable enters the composition.
     LaunchedEffect(key1 = true) {
-        startAnimation = true // Start the fade-in animation
-        delay(1500) // Hold duration (500ms fade in + 1000ms hold)
-        // After the hold, we navigate away. The NavHost exit transition will handle the fade-out.
+        startAnimation = true // Start the fade-in animation (500ms)
+        delay(3000) // Hold duration for 3000ms after fade-in completes
+        // After the hold, we navigate away. The NavHost exit transition (500ms) will handle the fade-out.
         navController.navigate(Screen.Login.route) {
             // Remove the splash screen from the back stack
             popUpTo(Screen.Splash.route) {
