@@ -103,8 +103,8 @@ import com.artificialinsightsllc.synopticnetwork.navigation.Screen
 import com.artificialinsightsllc.synopticnetwork.ui.theme.SynopticNetworkTheme
 import com.artificialinsightsllc.synopticnetwork.ui.theme.Transparent_Black
 import com.artificialinsightsllc.synopticnetwork.ui.viewmodels.MainViewModel
-import com.artificialinsightsllc.synopticnetwork.ui.viewmodels.DisplayMarker // Import DisplayMarker
-import com.artificialinsightsllc.synopticnetwork.ui.viewmodels.DisplayAlert // NEW: Import DisplayAlert
+import com.artificialinsightsllc.synopticnetwork.ui.viewmodels.DisplayMarker
+import com.artificialinsightsllc.synopticnetwork.ui.viewmodels.DisplayAlert
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
@@ -127,11 +127,12 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import com.artificialinsightsllc.synopticnetwork.data.models.getReportTypesWithEmojis
-import com.google.maps.android.compose.Polyline // Import Polyline for drawing lines
-import androidx.compose.ui.geometry.Offset // Import Offset for marker anchor
+import com.google.maps.android.compose.Polyline
+import androidx.compose.ui.geometry.Offset
 import com.google.android.gms.maps.model.CameraPosition
-import com.artificialinsightsllc.synopticnetwork.data.services.RadarTileProvider // Import the new TileProvider
-import okhttp3.OkHttpClient // Import OkHttpClient
+import com.artificialinsightsllc.synopticnetwork.data.services.RadarTileProvider
+import okhttp3.OkHttpClient
+import androidx.compose.ui.text.style.TextAlign // Import TextAlign
 
 
 /**
@@ -153,8 +154,11 @@ fun MainScreen(
     var showLegendSheet by remember { mutableStateOf(false) }
     var showAlertsSheet by remember { mutableStateOf(false) } // State to control alerts bottom sheet visibility
     var selectedAlertForDialog by remember { mutableStateOf<AlertFeature?>(null) } // New state for dialog alert
-    var showReflectivityRadarOverlay by remember { mutableStateOf(false) } // MODIFIED: State for reflectivity radar visibility
-    var showVelocityRadarOverlay by remember { mutableStateOf(false) } // NEW: State for velocity radar visibility
+
+    // These local states now reflect the ViewModel's state for active radar overlays
+    // and are used to control the visibility of the TileOverlays.
+    val showReflectivityRadarOverlay = mapState.isReflectivityRadarActive
+    val showVelocityRadarOverlay = mapState.isVelocityRadarActive
 
 
     // Removed local `selectedGroupedReports` state, as it will now be sourced from ViewModel
@@ -241,8 +245,8 @@ fun MainScreen(
             modifier = Modifier.fillMaxHeight(0.9f)
         ) {
             AlertsBottomSheetContent(
-                activeAlerts = mapState.activeAlerts, // MODIFIED: Pass DisplayAlert list
-                isLoadingAlerts = mapState.alertsLoading,
+                activeAlerts = mapState.activeAlerts,
+                isLoadingAlerts = mapState.alertsLoading, // Corrected: Use mapState.alertsLoading
                 radarWfo = mapState.radarWfo
             )
         }
@@ -259,7 +263,7 @@ fun MainScreen(
     // Show Grouped Reports Dialog when a group marker is clicked
     if (showGroupedReportsDialog && mapState.selectedGroupedFullReports.isNotEmpty()) {
         GroupedReportsDialog(
-            reports = mapState.selectedGroupedFullReports, // Use the reports from ViewModel state
+            reports = mapState.selectedGroupedFullReports,
             onDismiss = {
                 showGroupedReportsDialog = false
                 mainViewModel.onGroupMarkerClicked("") // Clear the selected grouped reports in ViewModel
@@ -285,7 +289,7 @@ fun MainScreen(
 
     Box(modifier = Modifier.fillMaxSize()) {
         val markerIconFactory = remember { MarkerIconFactory(context) }
-        // NEW: Initialize OkHttpClient for RadarTileProvider
+        // Initialize OkHttpClient for RadarTileProvider
         val okHttpClient = remember { OkHttpClient() }
 
         GoogleMap(
@@ -352,7 +356,7 @@ fun MainScreen(
             }
 
             // Draw NWS Alert Polygons
-            mapState.activeAlerts.forEach { displayAlert -> // MODIFIED: Iterate over DisplayAlert
+            mapState.activeAlerts.forEach { displayAlert ->
                 val alert = displayAlert.alert // Get the actual AlertFeature
                 alert.geometry?.let { geometry ->
                     if (geometry.type == "Polygon" && !geometry.coordinates.isNullOrEmpty()) {
@@ -372,14 +376,14 @@ fun MainScreen(
                                 onClick = {
                                     selectedAlertForDialog = alert // Set the clicked alert to show dialog
                                 },
-                                zIndex = 2f // NEW: Set a higher zIndex for alert polygons
+                                zIndex = 2f // Set a higher zIndex for alert polygons
                             )
                         }
                     }
                 }
             }
 
-            // MODIFIED: Reflectivity Radar Tile Overlay
+            // Reflectivity Radar Tile Overlay
             if (showReflectivityRadarOverlay && mapState.radarWfo != null && mapState.latestRadarTimestamp != null) {
                 val radarOfficeCodeForTileProvider = mapState.radarWfo!!.lowercase(Locale.US) // Ensure lowercase with Locale
                 val reflectivityLayerName = "${radarOfficeCodeForTileProvider}_sr_bref" // Explicit layer name
@@ -395,7 +399,7 @@ fun MainScreen(
                 }
             }
 
-            // NEW: Velocity Radar Tile Overlay
+            // Velocity Radar Tile Overlay
             if (showVelocityRadarOverlay && mapState.radarWfo != null && mapState.latestRadarTimestamp != null) {
                 val radarOfficeCodeForTileProvider = mapState.radarWfo!!.lowercase(Locale.US)
                 val velocityLayerName = "${radarOfficeCodeForTileProvider}_sr_bvel" // Explicit layer name for velocity
@@ -416,13 +420,13 @@ fun MainScreen(
             CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
         }
 
-        // Map Overlay UI
+        // Map Overlay UI (main Column)
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.SpaceBetween
+                .windowInsetsPadding(WindowInsets.safeDrawing) // Apply padding for system bars
+                .padding(horizontal = 16.dp, vertical = 16.dp), // Apply general padding
+            verticalArrangement = Arrangement.SpaceBetween // Push top and bottom content apart
         ) {
             // Top Row: Legend FAB (Left) and Map Type Selector (Right)
             Row(
@@ -431,12 +435,12 @@ fun MainScreen(
                 verticalAlignment = Alignment.Top
             ) {
                 // Legend FAB
-                androidx.compose.material3.FloatingActionButton( // Explicitly qualify
+                androidx.compose.material3.FloatingActionButton(
                     onClick = { showLegendSheet = true },
                     containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                     contentColor = MaterialTheme.colorScheme.onTertiaryContainer
                 ) {
-                    androidx.compose.material3.Icon(Icons.Default.Layers, contentDescription = "Map Legend") // Explicitly qualify
+                    androidx.compose.material3.Icon(Icons.Default.Layers, contentDescription = "Map Legend")
                 }
                 // Map Type Selector
                 MapTypeSelector(
@@ -445,27 +449,30 @@ fun MainScreen(
                 )
             }
 
-            // Bottom Row: Alerts FAB (Left) and Action Buttons (Right)
+            // Spacer to push content to bottom
+            Spacer(modifier = Modifier.weight(1f))
+
+            // Bottom section: A Row containing Alerts FAB (Left), Radar Badge (Center), and Action Buttons (Right)
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Bottom
+                horizontalArrangement = Arrangement.SpaceBetween, // Distribute items horizontally
+                verticalAlignment = Alignment.Bottom // Align items to the bottom
             ) {
-                // Alerts FAB with Badge
-                androidx.compose.material3.FloatingActionButton( // Explicitly qualify
+                // Alerts FAB with Badge (Left)
+                androidx.compose.material3.FloatingActionButton(
                     onClick = { showAlertsSheet = true },
                     containerColor = getAlertsFabColor(mapState.highestSeverity),
                     contentColor = Color.White,
-                    modifier = Modifier.padding(bottom = 0.dp) // Adjust padding as needed
+                    // No bottom padding needed here, as windowInsetsPadding handles it for the parent Column
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        androidx.compose.material3.Icon(Icons.Default.Info, contentDescription = "Active Alerts") // Explicitly qualify
+                        androidx.compose.material3.Icon(Icons.Default.Info, contentDescription = "Active Alerts")
                         if (mapState.activeAlerts.size > 0) {
                             Badge(
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
-                                    .offset(x = 10.dp, y = (-10).dp), // Offset badge to top-right of icon
-                                containerColor = MaterialTheme.colorScheme.error // Use error color for visibility
+                                    .offset(x = 10.dp, y = (-10).dp),
+                                containerColor = MaterialTheme.colorScheme.error
                             ) {
                                 Text(mapState.activeAlerts.size.toString())
                             }
@@ -473,20 +480,43 @@ fun MainScreen(
                     }
                 }
 
-                // Action Buttons are now aligned to the bottom end of the column
-                // Pass radar overlay states and toggles
+                // Radar Last Updated Badge (Conditional Visibility) - CENTERED BETWEEN FABs
+                if ((mapState.isReflectivityRadarActive || mapState.isVelocityRadarActive) && mapState.latestRadarTimestamp != null) {
+                    Card(
+                        shape = RoundedCornerShape(8.dp),
+                        colors = CardDefaults.cardColors(containerColor = Transparent_Black),
+                        modifier = Modifier
+                            .align(Alignment.Bottom) // Changed to Alignment.Bottom
+                            .weight(1f) // Take up available space
+                            .padding(horizontal = 8.dp) // Add horizontal padding to separate from FABs
+                    ) {
+                        Text(
+                            text = mapState.lastRadarUpdateTimeString ?: "Last Updated: N/A",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            textAlign = TextAlign.Center, // Corrected: Use TextAlign.Center
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                } else {
+                    // If no radar is active, still provide a spacer to maintain layout
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+
+                // Action Buttons column (Right)
                 ActionButtons(
                     navController = navController,
                     radarWfo = mapState.radarWfo,
-                    showReflectivityRadarOverlay = showReflectivityRadarOverlay, // MODIFIED: Pass reflectivity state
-                    onToggleReflectivityRadarOverlay = { newValue -> // MODIFIED: Handle mutual exclusivity
-                        showReflectivityRadarOverlay = newValue
-                        if (newValue) showVelocityRadarOverlay = false
+                    showReflectivityRadarOverlay = showReflectivityRadarOverlay,
+                    onToggleReflectivityRadarOverlay = { newValue ->
+                        mainViewModel.onReflectivityRadarToggled(newValue)
                     },
-                    showVelocityRadarOverlay = showVelocityRadarOverlay, // NEW: Pass velocity state
-                    onToggleVelocityRadarOverlay = { newValue -> // NEW: Handle mutual exclusivity
-                        showVelocityRadarOverlay = newValue
-                        if (newValue) showReflectivityRadarOverlay = false
+                    showVelocityRadarOverlay = showVelocityRadarOverlay,
+                    onToggleVelocityRadarOverlay = { newValue ->
+                        mainViewModel.onVelocityRadarToggled(newValue)
                     }
                 )
             }
@@ -525,30 +555,12 @@ private fun getAlertsFabColor(highestSeverity: AlertSeverity): Color {
 }
 
 /**
- * Composable for the Floating Action Button displaying active alert count and severity color.
- * This composable is now directly integrated into the MainScreen's layout,
- * and its FloatingActionButton is explicitly qualified there.
- * This function itself is not directly causing the error, but its usage was.
- * Keeping it here for logical separation, but the fix is applied in the caller.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ActiveAlertsFAB(alertCount: Int, highestSeverity: AlertSeverity, onClick: () -> Unit) {
-    val fabColor = getAlertsFabColor(highestSeverity)
-
-    // This composable is now directly integrated into the MainScreen's layout,
-    // and its FloatingActionButton is explicitly qualified there.
-    // This function itself is not directly causing the error, but its usage was.
-    // Keeping it here for logical separation, but the fix is applied in the caller.
-}
-
-/**
  * Composable for the content of the Alerts Bottom Sheet.
  * Displays a radar map and a list of active NWS alerts.
  */
 @Composable
 fun AlertsBottomSheetContent(
-    activeAlerts: List<DisplayAlert>, // MODIFIED: Now takes DisplayAlert list
+    activeAlerts: List<DisplayAlert>,
     isLoadingAlerts: Boolean,
     radarWfo: String?
 ) {
@@ -639,11 +651,10 @@ fun AlertsBottomSheetContent(
         }
 
         // Sort alerts by severity (Extreme first)
-        // MODIFIED: Sort DisplayAlerts, then access their alert.properties.severity
         val sortedAlerts = activeAlerts.sortedByDescending { AlertSeverity.fromString(it.alert.properties.severity).level }
 
-        items(sortedAlerts) { displayAlert -> // MODIFIED: Iterate over DisplayAlert
-            AlertItem(displayAlert = displayAlert) // MODIFIED: Pass DisplayAlert
+        items(sortedAlerts) { displayAlert ->
+            AlertItem(displayAlert = displayAlert)
         }
 
         // Spacer at the bottom
@@ -653,7 +664,6 @@ fun AlertsBottomSheetContent(
 
 /**
  * Composable for displaying a single NWS alert item.
- * MODIFIED: Now takes DisplayAlert to access isLocal flag.
  */
 @Composable
 private fun AlertItem(displayAlert: DisplayAlert) {
@@ -692,7 +702,7 @@ private fun AlertItem(displayAlert: DisplayAlert) {
                     color = getAlertSeverityColor(AlertSeverity.fromString(alert.properties.severity))
                 )
             }
-            // NEW: Display remaining time until expiration
+            // Display remaining time until expiration
             alert.properties.expires?.let { expiresTimestamp ->
                 val remainingTime = getRemainingTime(expiresTimestamp)
                 if (remainingTime != null) {
@@ -758,7 +768,7 @@ private fun AlertDetailsDialog(alert: AlertFeature, onDismiss: () -> Unit) {
                     Text(it, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(4.dp))
                 }
-                // NEW: Display remaining time until expiration in dialog
+                // Display remaining time until expiration in dialog
                 alert.properties.expires?.let { expiresTimestamp ->
                     val remainingTime = getRemainingTime(expiresTimestamp)
                     if (remainingTime != null) {
@@ -804,9 +814,9 @@ private fun AlertDetailsDialog(alert: AlertFeature, onDismiss: () -> Unit) {
  */
 @Composable
 private fun GroupedReportsDialog(
-    reports: List<Report>, // Changed to List<Report> to access full details
+    reports: List<Report>,
     onDismiss: () -> Unit,
-    onReportSelected: (Report) -> Unit // Changed to take Report
+    onReportSelected: (Report) -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1109,10 +1119,10 @@ private fun ActionButtons(
     navController: NavHostController,
     modifier: Modifier = Modifier,
     radarWfo: String?,
-    showReflectivityRadarOverlay: Boolean, // MODIFIED: Reflectivity state
-    onToggleReflectivityRadarOverlay: (Boolean) -> Unit, // MODIFIED: Reflectivity toggle
-    showVelocityRadarOverlay: Boolean, // NEW: Velocity state
-    onToggleVelocityRadarOverlay: (Boolean) -> Unit // NEW: Velocity toggle
+    showReflectivityRadarOverlay: Boolean,
+    onToggleReflectivityRadarOverlay: (Boolean) -> Unit,
+    showVelocityRadarOverlay: Boolean,
+    onToggleVelocityRadarOverlay: (Boolean) -> Unit
 ) {
     // Determine if the "Weather Products" FAB should be enabled
     val isProductFabEnabled = radarWfo != null && radarWfo.removePrefix("K").isNotBlank()
@@ -1139,15 +1149,11 @@ private fun ActionButtons(
     val productFabContainerColor = if (isProductFabEnabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
 
     Column(modifier = modifier, horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        // MODIFIED: FAB for Reflectivity Radar Toggle
+        // FAB for Reflectivity Radar Toggle
         androidx.compose.material3.FloatingActionButton(
             onClick = {
                 val newState = !showReflectivityRadarOverlay
-                onToggleReflectivityRadarOverlay(newState)
-                // If turning reflectivity ON, turn velocity OFF
-                if (newState) {
-                    onToggleVelocityRadarOverlay(false)
-                }
+                onToggleReflectivityRadarOverlay(newState) // Call ViewModel function
             },
             containerColor = if (showReflectivityRadarOverlay) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
             contentColor = Color.White
@@ -1155,15 +1161,11 @@ private fun ActionButtons(
             androidx.compose.material3.Icon(Icons.Default.Satellite, "Toggle Reflectivity Radar")
         }
 
-        // NEW: FAB for Velocity Radar Toggle
+        // FAB for Velocity Radar Toggle
         androidx.compose.material3.FloatingActionButton(
             onClick = {
                 val newState = !showVelocityRadarOverlay
-                onToggleVelocityRadarOverlay(newState)
-                // If turning velocity ON, turn reflectivity OFF
-                if (newState) {
-                    onToggleReflectivityRadarOverlay(false)
-                }
+                onToggleVelocityRadarOverlay(newState) // Call ViewModel function
             },
             containerColor = if (showVelocityRadarOverlay) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
             contentColor = Color.White
