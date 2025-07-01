@@ -130,6 +130,8 @@ import com.artificialinsightsllc.synopticnetwork.data.models.getReportTypesWithE
 import com.google.maps.android.compose.Polyline // Import Polyline for drawing lines
 import androidx.compose.ui.geometry.Offset // Import Offset for marker anchor
 import com.google.android.gms.maps.model.CameraPosition
+import com.artificialinsightsllc.synopticnetwork.data.services.RadarTileProvider // Import the new TileProvider
+import okhttp3.OkHttpClient // Import OkHttpClient
 
 
 /**
@@ -151,6 +153,7 @@ fun MainScreen(
     var showLegendSheet by remember { mutableStateOf(false) }
     var showAlertsSheet by remember { mutableStateOf(false) } // State to control alerts bottom sheet visibility
     var selectedAlertForDialog by remember { mutableStateOf<AlertFeature?>(null) } // New state for dialog alert
+    var showRadarOverlay by remember { mutableStateOf(false) } // NEW: State to toggle radar overlay visibility
 
     // Removed local `selectedGroupedReports` state, as it will now be sourced from ViewModel
     var showGroupedReportsDialog by remember { mutableStateOf(false) }
@@ -280,6 +283,8 @@ fun MainScreen(
 
     Box(modifier = Modifier.fillMaxSize()) {
         val markerIconFactory = remember { MarkerIconFactory(context) }
+        // NEW: Initialize OkHttpClient for RadarTileProvider
+        val okHttpClient = remember { OkHttpClient() }
 
         GoogleMap(
             modifier = Modifier.fillMaxSize(),
@@ -364,10 +369,27 @@ fun MainScreen(
                                 clickable = true, // Make polygon clickable
                                 onClick = {
                                     selectedAlertForDialog = alert // Set the clicked alert to show dialog
-                                }
+                                },
+                                zIndex = 2f // NEW: Set a higher zIndex for alert polygons
                             )
                         }
                     }
+                }
+            }
+
+            // NEW: Radar Tile Overlay
+            if (showRadarOverlay && mapState.radarWfo != null && mapState.latestRadarTimestamp != null) {
+                // Pass the full 4-letter radar WFO (e.g., "KTBW") converted to lowercase
+                val radarOfficeCodeForTileProvider = mapState.radarWfo!!.lowercase(Locale.US) // Ensure lowercase with Locale
+                Log.d("MainScreen", "Creating RadarTileProvider with officeCode: $radarOfficeCodeForTileProvider and timestamp: ${mapState.latestRadarTimestamp}")
+                if (radarOfficeCodeForTileProvider.isNotBlank()) {
+                    com.google.maps.android.compose.TileOverlay(
+                        tileProvider = remember(radarOfficeCodeForTileProvider, mapState.latestRadarTimestamp) { // Add latestRadarTimestamp to remember key
+                            RadarTileProvider(radarOfficeCodeForTileProvider, okHttpClient, mapState.latestRadarTimestamp)
+                        },
+                        fadeIn = true,
+                        zIndex = 0f // NEW: Set zIndex to 0f for radar overlay
+                    )
                 }
             }
         }
@@ -435,7 +457,12 @@ fun MainScreen(
 
                 // Action Buttons are now aligned to the bottom end of the column
                 // Pass mapState.radarWfo to ActionButtons
-                ActionButtons(navController = navController, radarWfo = mapState.radarWfo)
+                ActionButtons(
+                    navController = navController,
+                    radarWfo = mapState.radarWfo,
+                    showRadarOverlay = showRadarOverlay, // Pass the state
+                    onToggleRadarOverlay = { showRadarOverlay = it } // Pass the setter
+                )
             }
         }
     }
@@ -1024,10 +1051,10 @@ private fun AddCommentDialog(onDismiss: () -> Unit, onPostComment: (String) -> U
 
 private fun getRelativeTime(timestamp: Long): String {
     val now = System.currentTimeMillis()
-    val diff = now - timestamp
-    val minutes = TimeUnit.MILLISECONDS.toMinutes(diff)
-    val hours = TimeUnit.MILLISECONDS.toHours(diff)
-    val days = TimeUnit.MILLISECONDS.toDays(diff)
+    val diffMillis = now - timestamp
+    val minutes = TimeUnit.MILLISECONDS.toMinutes(diffMillis)
+    val hours = TimeUnit.MILLISECONDS.toHours(diffMillis)
+    val days = TimeUnit.MILLISECONDS.toDays(diffMillis)
     return when {
         minutes < 1 -> "Just now"
         minutes < 60 -> "$minutes minute${if (minutes > 1) "s" else ""}"
@@ -1055,7 +1082,9 @@ private fun MapTypeSelector(currentMapType: MapType, onMapTypeSelected: (MapType
 private fun ActionButtons(
     navController: NavHostController,
     modifier: Modifier = Modifier,
-    radarWfo: String? // Use the parameter directly
+    radarWfo: String?,
+    showRadarOverlay: Boolean, // NEW: Pass the state of the radar overlay
+    onToggleRadarOverlay: (Boolean) -> Unit // NEW: Pass the setter for the radar overlay state
 ) {
     // Determine if the "Weather Products" FAB should be enabled
     val isProductFabEnabled = radarWfo != null && radarWfo.removePrefix("K").isNotBlank()
@@ -1082,6 +1111,15 @@ private fun ActionButtons(
     val productFabContainerColor = if (isProductFabEnabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
 
     Column(modifier = modifier, horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        // NEW: FAB for Radar Toggle
+        androidx.compose.material3.FloatingActionButton(
+            onClick = { onToggleRadarOverlay(!showRadarOverlay) }, // Toggle the radar overlay state
+            containerColor = if (showRadarOverlay) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary, // Change color when active
+            contentColor = Color.White
+        ) {
+            androidx.compose.material3.Icon(Icons.Default.Satellite, "Toggle Radar") // Using Satellite icon for radar
+        }
+
         // FAB for Weather Products
         androidx.compose.material3.FloatingActionButton(
             onClick = productFabOnClick, // Use the conditional onClick
@@ -1295,7 +1333,8 @@ fun MainScreenPreview() {
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 MapTypeSelector(currentMapType = MapType.NORMAL, onMapTypeSelected = {})
-                ActionButtons(navController = rememberNavController(), radarWfo = "KTBW") // Provide a dummy WFO for preview
+                // Provide dummy values for preview
+                ActionButtons(navController = rememberNavController(), radarWfo = "KTBW", showRadarOverlay = false, onToggleRadarOverlay = {})
             }
         }
     }

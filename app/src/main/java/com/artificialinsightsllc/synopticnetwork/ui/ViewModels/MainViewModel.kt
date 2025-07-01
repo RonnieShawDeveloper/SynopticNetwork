@@ -83,7 +83,8 @@ data class MapState(
     val currentMapZoom: Float = 10f,
     val userGeohash3Char: String? = null, // User's 3-char geohash for local report loading
     val userStateCode: String? = null, // NEW: User's 2-letter state code (e.g., "FL")
-    val userForecastZone: String? = null // NEW: User's NWS forecast zone (e.g., "FLZ151")
+    val userForecastZone: String? = null, // NEW: User's NWS forecast zone (e.g., "FLZ151")
+    val latestRadarTimestamp: String? = null // NEW: Latest available radar timestamp from GetCapabilities
 )
 
 // Initialize the filters with all types set to true (visible)
@@ -164,6 +165,22 @@ class MainViewModel : ViewModel() {
 
             val userForecastZone = pointData?.properties?.forecastZone?.substringAfterLast("/")
 
+            // Fetch radar WFO (still based on user's current location for relevant radar)
+            val radarWfo = location.let {
+                nwsApiService.getRadarWfo(it.latitude, it.longitude)
+            }
+
+            // NEW: Fetch latest radar timestamp using the determined WFO
+            val latestRadarTimestamp = if (radarWfo != null) {
+                // Pass the full 4-letter radar WFO (e.g., "KTBW") converted to lowercase
+                val radarOfficeCodeForWMS = radarWfo.lowercase()
+                val layerName = "${radarOfficeCodeForWMS}_sr_bref" // Match the layer name in GetCapabilities
+                nwsApiService.getLatestRadarTimestamp(radarOfficeCodeForWMS, layerName)
+            } else {
+                null
+            }
+
+
             _mapState.update {
                 it.copy(
                     currentLocation = location,
@@ -171,9 +188,16 @@ class MainViewModel : ViewModel() {
                     currentMapZoom = 10f,
                     userGeohash3Char = userGeohash3Char,
                     userStateCode = userStateCode, // NEW: Store state code
-                    userForecastZone = userForecastZone // NEW: Store forecast zone
+                    userForecastZone = userForecastZone, // NEW: Store forecast zone
+                    radarWfo = radarWfo, // Set the radar WFO
+                    latestRadarTimestamp = latestRadarTimestamp // Set the latest radar timestamp
                 )
             }
+
+            // Add logging for the fetched radar details
+            Log.d("MainViewModel", "Fetched radarWfo: ${radarWfo ?: "null"}")
+            Log.d("MainViewModel", "Fetched latestRadarTimestamp: ${latestRadarTimestamp ?: "null"}")
+
 
             // Start listening for reports based on current location's geohash
             listenForMapReports(userGeohash3Char)
@@ -273,7 +297,7 @@ class MainViewModel : ViewModel() {
                 }
             }
             // Low zoom: Group markers by Geohash
-            currentState.currentMapZoom < MIN_SPREAD_ZOOM -> { // Corrected: Use currentState.currentMapZoom
+            currentState.currentMapZoom < MIN_SPREAD_ZOOM -> { // Corrected: Use currentState.currentZoom
                 reportsByGeohash.forEach { (geohash, geohashReports) ->
                     val centerLatLng = calculateCenter(geohashReports)
                     if (centerLatLng != null) {
@@ -372,15 +396,13 @@ class MainViewModel : ViewModel() {
                         ?: AlertSeverity.NONE
 
                     // Fetch radar WFO (still based on user's current location for relevant radar)
-                    val radarWfo = _mapState.value.currentLocation?.let {
-                        nwsApiService.getRadarWfo(it.latitude, it.longitude)
-                    }
+                    // This is now done once in onMapReady, so no need to refetch here.
+                    // The radarWfo and latestRadarTimestamp are already in the state.
 
                     _mapState.update {
                         it.copy(
                             activeAlerts = processedAlerts, // MODIFIED: Store processed alerts
                             highestSeverity = highestSeverity,
-                            radarWfo = radarWfo,
                             alertsLoading = false
                         )
                     }
@@ -493,3 +515,4 @@ class MainViewModel : ViewModel() {
         reportsListenerJob?.cancel() // NEW: Cancel reports listener
     }
 }
+
