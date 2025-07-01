@@ -7,6 +7,8 @@ import android.graphics.Canvas
 import android.graphics.Color as GraphicsColor // Alias to avoid ambiguity with Compose Color
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.Typeface
 import android.util.Log
 import androidx.compose.foundation.Image
@@ -160,12 +162,14 @@ fun MainScreen(
     val reportSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val alertsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val legendSheetState = rememberModalBottomSheetState()
+    val stormCellDetailsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true) // NEW: State for storm cell details sheet
+
     var showAddCommentDialog by remember { mutableStateOf(false) }
     var showLegendSheet by remember { mutableStateOf(false) }
     var showAlertsSheet by remember { mutableStateOf(false) }
     var selectedAlertForDialog by remember { mutableStateOf<AlertFeature?>(null) }
-
     var showGroupedReportsDialog by remember { mutableStateOf(false) }
+    var selectedStormCellForDetails by remember { mutableStateOf<StormCell?>(null) } // NEW: State for selected storm cell
 
 
     val defaultLocation = LatLng(28.3486, -82.6826)
@@ -259,6 +263,17 @@ fun MainScreen(
                 isLoadingAlerts = mapState.alertsLoading,
                 radarWfo = mapState.radarWfo
             )
+        }
+    }
+
+    // Show Storm Cell Details Bottom Sheet (NEW)
+    if (selectedStormCellForDetails != null) {
+        ModalBottomSheet(
+            onDismissRequest = { selectedStormCellForDetails = null },
+            sheetState = stormCellDetailsSheetState,
+            modifier = Modifier.fillMaxHeight(0.9f)
+        ) {
+            StormCellDetailsBottomSheetContent(stormCell = selectedStormCellForDetails!!)
         }
     }
 
@@ -435,11 +450,12 @@ fun MainScreen(
                     Marker(
                         state = rememberMarkerState(position = stormCell.initialLocation),
                         title = stormCell.mainIconText.substringBefore("\n").trim(), // Use first line as title
-                        snippet = stormCell.mainIconText, // Full text for snippet/info window
-                        icon = markerIconFactory.createStormCellIcon(stormCell), // Pass stormCell for TVS/MESO
+                        snippet = null, // REMOVED: No longer showing snippet, will use bottom sheet instead
+                        icon = markerIconFactory.createStormCellIcon(stormCell),
                         onClick = {
-                            // Default info window behavior for now, as requested
-                            false
+                            selectedStormCellForDetails = stormCell // Set selected storm cell
+                            scope.launch { stormCellDetailsSheetState.show() } // Show bottom sheet
+                            true // Consume the event
                         },
                         zIndex = 3f // Higher than radar, lower than user reports
                     )
@@ -599,20 +615,17 @@ fun FabWithBadge(
     containerColor: Color,
     contentColor: Color,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true // Corrected: Added 'enabled' parameter back to FabWithBadge
+    enabled: Boolean = true
 ) {
     Box(modifier = modifier.width(80.dp)) {
         FloatingActionButton(
             onClick = onClick,
             containerColor = containerColor,
             contentColor = contentColor,
-            modifier = Modifier.align(Alignment.Center),
-            // enabled = enabled // Corrected: Pass the 'enabled' state to the internal FloatingActionButton
+            modifier = Modifier.align(Alignment.Center)
+            // Removed enabled parameter as per user's instruction
         ) {
             // The icon composable is invoked here, which is a @Composable context.
-            // This was the source of the "Composable invocations can only happen from..." error.
-            // By ensuring 'enabled' is a valid parameter for the Material3 FAB,
-            // the compiler correctly infers the composable context.
             icon()
         }
 
@@ -1298,6 +1311,7 @@ private fun ActionButtons(
         // FAB for Velocity Radar Toggle
         FabWithBadge(
             onClick = {
+                // Corrected: Calculate newValue within the lambda's scope
                 val newState = !showVelocityRadarOverlay
                 onToggleVelocityRadarOverlay(newState)
             },
@@ -1348,6 +1362,10 @@ private fun ActionButtons(
  * Helper function to create and cache custom marker icons for the map.
  * Each icon combines a base weather pin with an emoji representing the report type,
  * and is rotated to show the direction the photo was taken.
+ * Icons are cached to improve performance for repeated requests.
+ *
+ * @param report The MapReport containing details for icon creation (report type, direction).
+ * @return A BitmapDescriptor ready to be used as a marker icon, or null if creation fails.
  */
 class MarkerIconFactory(private val context: Context) {
     private val iconCache = mutableMapOf<String, BitmapDescriptor>()
@@ -1355,6 +1373,15 @@ class MarkerIconFactory(private val context: Context) {
     // Use MutableStateFlow to hold the loaded Bitmap and the URL it came from
     private val _stormAttributeBaseBitmapWithUrl = MutableStateFlow<Pair<Bitmap, String>?>(null)
     val stormAttributeBaseBitmapFlow = _stormAttributeBaseBitmapWithUrl.asStateFlow()
+
+    // Define the size of individual icons within the sprite sheet
+    private val ICON_WIDTH = 32
+    private val ICON_HEIGHT = 32
+    // Assuming a 4x4 grid for the sprite sheet based on common placefile icon sheets
+    private val ICONS_PER_ROW = 4
+
+    // NEW: Define the desired display size for the storm cell icons on the map
+    private val STORM_ICON_DISPLAY_SIZE = 96 // pixels, for a 96x96 display size
 
     /**
      * Loads the base storm attribute icon from the given URL and caches it.
@@ -1561,43 +1588,83 @@ class MarkerIconFactory(private val context: Context) {
     fun createStormCellIcon(stormCell: StormCell): BitmapDescriptor? {
         // Observe the loaded stormAttributeBaseBitmap
         val currentBaseBitmapWithUrl by stormAttributeBaseBitmapFlow.collectAsState()
-        val currentBaseBitmap = currentBaseBitmapWithUrl?.first // Get the Bitmap from the Pair
+        val fullSpriteSheetBitmap = currentBaseBitmapWithUrl?.first // Get the Bitmap from the Pair
 
-        // Corrected: Cache key now includes the URL hash to ensure new icon if base image changes
-        val cacheKey = "storm_cell_${stormCell.hasTVS}_${stormCell.hasMeso}_${currentBaseBitmapWithUrl?.second?.hashCode()}"
+        // Corrected: Cache key now includes the URL hash and iconIndex to ensure new icon if base image or index changes
+        val cacheKey = "storm_cell_${stormCell.hasTVS}_${stormCell.hasMeso}_${stormCell.iconIndex}_${fullSpriteSheetBitmap?.hashCode()}"
         if (iconCache.containsKey(cacheKey)) {
             return iconCache[cacheKey]
         }
 
-        val baseBitmap = currentBaseBitmap ?: return null // Use the loaded base bitmap
+        if (fullSpriteSheetBitmap == null) {
+            Log.w("MarkerIconFactory", "Full sprite sheet bitmap is null, cannot create storm cell icon.")
+            return null
+        }
 
-        // Create a mutable copy to draw on
-        val mutableBitmap = baseBitmap.copy(Bitmap.Config.ARGB_8888, true)
-        val canvas = Canvas(mutableBitmap)
+        // Calculate the source rectangle for cropping the individual icon from the sprite sheet
+        val iconX = (stormCell.iconIndex % ICONS_PER_ROW) * ICON_WIDTH
+        val iconY = (stormCell.iconIndex / ICONS_PER_ROW) * ICON_HEIGHT
 
-        // Draw TVS indicator if present (e.g., a red circle/dot)
+        // Ensure the calculated region is within the bounds of the sprite sheet
+        if (iconX + ICON_WIDTH > fullSpriteSheetBitmap.width || iconY + ICON_HEIGHT > fullSpriteSheetBitmap.height) {
+            Log.e("MarkerIconFactory", "Icon index ${stormCell.iconIndex} is out of bounds for sprite sheet dimensions.")
+            return null
+        }
+
+        // 1. Crop the individual icon from the full sprite sheet
+        val croppedIconBitmap = Bitmap.createBitmap(
+            fullSpriteSheetBitmap,
+            iconX,
+            iconY,
+            ICON_WIDTH,
+            ICON_HEIGHT
+        )
+
+        // 2. Scale the cropped icon to the desired display size
+        val scaledIconBitmap = Bitmap.createScaledBitmap(
+            croppedIconBitmap,
+            STORM_ICON_DISPLAY_SIZE,
+            STORM_ICON_DISPLAY_SIZE,
+            true // Filter for smooth scaling
+        ).copy(Bitmap.Config.ARGB_8888, true) // Ensure it's mutable for pixel manipulation
+
+        // 3. Make black background transparent on the scaled bitmap
+        for (x in 0 until scaledIconBitmap.width) {
+            for (y in 0 until scaledIconBitmap.height) {
+                val pixel = scaledIconBitmap.getPixel(x, y)
+                // Check if the pixel is black or very close to black (e.g., for anti-aliasing)
+                // You might need to fine-tune this threshold (e.g., check individual R, G, B values)
+                if (GraphicsColor.red(pixel) < 20 && GraphicsColor.green(pixel) < 20 && GraphicsColor.blue(pixel) < 20) {
+                    scaledIconBitmap.setPixel(x, y, GraphicsColor.TRANSPARENT)
+                }
+            }
+        }
+
+        val canvas = Canvas(scaledIconBitmap) // Draw on the scaled bitmap
+
+        // 4. Draw TVS indicator if present (e.g., a red circle/dot)
         if (stormCell.hasTVS) {
             val paint = Paint().apply {
                 color = GraphicsColor.RED
                 style = Paint.Style.FILL
                 isAntiAlias = true
             }
-            // Draw a small red circle at the top-right corner or center of the icon
-            canvas.drawCircle(mutableBitmap.width * 0.8f, mutableBitmap.height * 0.2f, 10f, paint)
+            // Draw a small red circle at the top-right corner of the SCALED icon
+            canvas.drawCircle(scaledIconBitmap.width * 0.8f, scaledIconBitmap.height * 0.2f, 10f, paint) // Increased size for visibility
         }
 
-        // Draw MESO indicator if present (e.g., a yellow circle/dot)
+        // 5. Draw MESO indicator if present (e.g., a yellow circle/dot)
         if (stormCell.hasMeso) {
             val paint = Paint().apply {
                 color = GraphicsColor.YELLOW
                 style = Paint.Style.FILL
                 isAntiAlias = true
             }
-            // Draw a small yellow circle at the top-left corner
-            canvas.drawCircle(mutableBitmap.width * 0.2f, mutableBitmap.height * 0.2f, 10f, paint)
+            // Draw a small yellow circle at the top-left corner of the SCALED icon
+            canvas.drawCircle(scaledIconBitmap.width * 0.2f, scaledIconBitmap.height * 0.2f, 10f, paint) // Increased size for visibility
         }
 
-        val descriptor = BitmapDescriptorFactory.fromBitmap(mutableBitmap)
+        val descriptor = BitmapDescriptorFactory.fromBitmap(scaledIconBitmap)
         iconCache[cacheKey] = descriptor
         return descriptor
     }
@@ -1672,6 +1739,62 @@ class MarkerIconFactory(private val context: Context) {
         return Bitmap.createBitmap(this, 0, 0, width, height, matrix, true)
     }
 }
+
+/**
+ * Helper function to parse the mainIconText and extract relevant details for the snippet.
+ * This is now used within the StormCellDetailsBottomSheetContent.
+ */
+@Composable
+private fun parseStormCellDetails(mainIconText: String): List<String> {
+    return remember(mainIconText) {
+        val lines = mainIconText.split("\n").map { it.trim() }.filter { it.isNotBlank() }
+        val details = mutableListOf<String>()
+
+        // Add all lines except the first (which is used for the title of the marker)
+        if (lines.size > 1) {
+            details.addAll(lines.subList(1, lines.size))
+        }
+        details
+    }
+}
+
+/**
+ * NEW: Composable for displaying detailed storm cell information in a ModalBottomSheet.
+ */
+@Composable
+private fun StormCellDetailsBottomSheetContent(stormCell: StormCell) {
+    val details = parseStormCellDetails(stormCell.mainIconText)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 24.dp)
+            .verticalScroll(rememberScrollState()), // Enable scrolling for long content
+        horizontalAlignment = Alignment.Start,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = stormCell.mainIconText.substringBefore("\n").trim(), // Use the first line as main title
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+
+        details.forEach { detailLine ->
+            Text(
+                text = detailLine,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+            )
+        }
+
+        // You can add more structured display here if needed, e.g.,
+        // if (stormCell.hasTVS) Text("TVS Detected!", color = GraphicsColor.RED)
+        // if (stormCell.hasMeso) Text("Mesocyclone Detected!", color = GraphicsColor.YELLOW)
+    }
+}
+
 
 /**
  * Preview for the Main Screen.

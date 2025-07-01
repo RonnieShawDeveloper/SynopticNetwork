@@ -48,6 +48,9 @@ data class FontDetails(
  * @param forecastIcons A list of icons representing future forecast positions (e.g., +15 min).
  * @param hasTVS A boolean indicating if the storm cell has a Tornado Vortex Signature (TVS).
  * @param hasMeso A boolean indicating if the storm cell has a Mesocyclone (MESO).
+ * @param iconIndex The index of the icon within the sprite sheet for this storm cell.
+ * @param direction The direction of movement in degrees (0-359), extracted from mainIconText. (NEW)
+ * @param speed The speed of movement in knots, extracted from mainIconText. (NEW)
  */
 data class StormCell(
     val initialLocation: LatLng,
@@ -55,7 +58,10 @@ data class StormCell(
     val trackLine: List<LatLng> = emptyList(),
     val forecastIcons: List<ForecastIcon> = emptyList(),
     val hasTVS: Boolean = false, // Derived from mainIconText
-    val hasMeso: Boolean = false // Derived from mainIconText
+    val hasMeso: Boolean = false, // Derived from mainIconText
+    val iconIndex: Int = 0,
+    val direction: Float? = null, // NEW: Nullable as not all cells have it
+    val speed: Int? = null // NEW: Nullable as not all cells have it
 )
 
 /**

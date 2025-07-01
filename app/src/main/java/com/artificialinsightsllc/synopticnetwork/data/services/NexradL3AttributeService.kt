@@ -1,6 +1,6 @@
 package com.artificialinsightsllc.synopticnetwork.data.services
 
-import android.util.Log
+import android.util.Log // Import for logging
 import com.artificialinsightsllc.synopticnetwork.data.models.FontDetails
 import com.artificialinsightsllc.synopticnetwork.data.models.ForecastIcon
 import com.artificialinsightsllc.synopticnetwork.data.models.NexradL3AttributePlacefile
@@ -10,6 +10,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers // Import Dispatchers
+import kotlinx.coroutines.withContext // Import withContext
 
 /**
  * Service class responsible for fetching and parsing NEXRAD Level 3 Attributes placefile data.
@@ -27,25 +29,33 @@ class NexradL3AttributeService(
      * @return The raw placefile content as a String, or null if fetching fails.
      */
     suspend fun fetchPlacefile(radarSiteId: String): String? {
+        // Construct the URL with the uppercase radar site ID
         val url = "$BASE_PLACEFILE_URL?nexrad=${radarSiteId.uppercase(Locale.US)}"
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", "SynopticNetwork (rdspromo@gmail.com)") // Required for some NWS/NOAA services
             .build()
 
-        return try {
-            val response = httpClient.newCall(request).execute()
-            if (response.isSuccessful) {
-                response.body?.string().also {
-                    Log.d(TAG, "Successfully fetched placefile for $radarSiteId")
+        // Log the URL being used
+        Log.d(TAG, "Fetching placefile from URL: $url")
+
+        // Use withContext(Dispatchers.IO) to perform the network request on a background thread
+        return withContext(Dispatchers.IO) {
+            try {
+                val response = httpClient.newCall(request).execute()
+                if (response.isSuccessful) {
+                    val responseBody = response.body?.string()
+                    // Log the retrieved raw data (truncate if very long for readability)
+                    Log.d(TAG, "Successfully fetched placefile for $radarSiteId. Raw data (first 500 chars): ${responseBody?.take(500)}...")
+                    responseBody
+                } else {
+                    Log.e(TAG, "Failed to fetch placefile for $radarSiteId: ${response.code} - ${response.message}")
+                    null
                 }
-            } else {
-                Log.e(TAG, "Failed to fetch placefile for $radarSiteId: ${response.code} - ${response.message}")
+            } catch (e: IOException) {
+                Log.e(TAG, "Network error fetching placefile for $radarSiteId: ${e.message}", e)
                 null
             }
-        } catch (e: IOException) {
-            Log.e(TAG, "Network error fetching placefile for $radarSiteId: ${e.message}", e)
-            null
         }
     }
 
@@ -58,7 +68,7 @@ class NexradL3AttributeService(
     fun parsePlacefile(rawText: String): NexradL3AttributePlacefile? {
         val lines = rawText.split("\n").map { it.trim() }.filter { it.isNotBlank() }
         if (lines.isEmpty()) {
-            Log.w(TAG, "Empty or blank placefile content provided.")
+            Log.w(TAG, "Empty or blank placefile content provided for parsing.")
             return null
         }
 
@@ -70,6 +80,9 @@ class NexradL3AttributeService(
 
         var currentStormCellInitialLocation: LatLng? = null
         var currentStormCellMainIconText: String? = null
+        var currentStormCellIconIndex: Int = 0
+        var currentStormCellDirection: Float? = null // NEW: Store direction
+        var currentStormCellSpeed: Int? = null // NEW: Store speed
         val currentStormCellTrackLine = mutableListOf<LatLng>()
         val currentStormCellForecastIcons = mutableListOf<ForecastIcon>()
         var inObjectBlock = false
@@ -113,7 +126,10 @@ class NexradL3AttributeService(
                                     trackLine = currentStormCellTrackLine.toList(),
                                     forecastIcons = currentStormCellForecastIcons.toList(),
                                     hasTVS = hasTVS,
-                                    hasMeso = hasMeso
+                                    hasMeso = hasMeso,
+                                    iconIndex = currentStormCellIconIndex,
+                                    direction = currentStormCellDirection, // NEW: Add direction
+                                    speed = currentStormCellSpeed // NEW: Add speed
                                 )
                             )
                         }
@@ -122,6 +138,9 @@ class NexradL3AttributeService(
                         currentStormCellTrackLine.clear()
                         currentStormCellForecastIcons.clear()
                         currentStormCellMainIconText = null // Reset main icon text for new object
+                        currentStormCellIconIndex = 0 // Reset icon index
+                        currentStormCellDirection = null // NEW: Reset direction
+                        currentStormCellSpeed = null // NEW: Reset speed
 
                         val coords = line.substringAfter("Object:").trim().split(",")
                         if (coords.size == 2) {
@@ -134,18 +153,22 @@ class NexradL3AttributeService(
                     line.startsWith("Icon:") -> {
                         val iconData = line.substringAfter("Icon:").trim()
                         if (inObjectBlock) {
-                            // This is either the main storm cell icon or a forecast icon
                             val parts = iconData.split(",")
                             if (parts.size >= 5) { // Minimum parts for a basic icon
-                                // Check if it's the main icon (usually starts with 0,0,0,1,X where X is icon type)
-                                // and contains multi-line text (indicated by \n)
                                 val isMainIcon = parts[0].trim() == "0" && parts[1].trim() == "0" && parts[2].trim() == "0"
-                                if (isMainIcon && iconData.contains("\"")) {
-                                    // Extract the multi-line text between the quotes
+                                if (isMainIcon && parts.size >= 5) {
+                                    currentStormCellIconIndex = parts[4].toIntOrNull() ?: 0
                                     val textStart = iconData.indexOf("\"") + 1
                                     val textEnd = iconData.lastIndexOf("\"")
                                     if (textStart > 0 && textEnd > textStart) {
                                         currentStormCellMainIconText = iconData.substring(textStart, textEnd).replace("\\n", "\n")
+                                        // NEW: Parse direction and speed from mainIconText
+                                        currentStormCellMainIconText?.let {
+                                            val drctMatch = Regex("Drct: (\\d+)").find(it)
+                                            val speedMatch = Regex("Speed: (\\d+)").find(it)
+                                            currentStormCellDirection = drctMatch?.groupValues?.get(1)?.toFloatOrNull()
+                                            currentStormCellSpeed = speedMatch?.groupValues?.get(1)?.toIntOrNull()
+                                        }
                                     }
                                 } else {
                                     // This is a forecast icon
@@ -154,7 +177,7 @@ class NexradL3AttributeService(
                                         val lat = coordsAndLabel[0].toDoubleOrNull()
                                         val lon = coordsAndLabel[1].toDoubleOrNull()
                                         val rotation = coordsAndLabel[2].toFloatOrNull()
-                                        val label = coordsAndLabel.drop(5).joinToString(",").trim('"') // Label is the 6th part (index 5) onwards
+                                        val label = coordsAndLabel.drop(5).joinToString(",").trim('"')
 
                                         if (lat != null && lon != null && rotation != null && label.isNotBlank()) {
                                             currentStormCellForecastIcons.add(ForecastIcon(LatLng(lat, lon), rotation, label))
@@ -200,7 +223,10 @@ class NexradL3AttributeService(
                                         trackLine = currentStormCellTrackLine.toList(),
                                         forecastIcons = currentStormCellForecastIcons.toList(),
                                         hasTVS = hasTVS,
-                                        hasMeso = hasMeso
+                                        hasMeso = hasMeso,
+                                        iconIndex = currentStormCellIconIndex,
+                                        direction = currentStormCellDirection, // NEW: Add direction
+                                        speed = currentStormCellSpeed // NEW: Add speed
                                     )
                                 )
                             } else {
@@ -211,6 +237,9 @@ class NexradL3AttributeService(
                             currentStormCellForecastIcons.clear()
                             currentStormCellInitialLocation = null
                             currentStormCellMainIconText = null
+                            currentStormCellIconIndex = 0 // Reset icon index
+                            currentStormCellDirection = null // NEW: Reset direction
+                            currentStormCellSpeed = null // NEW: Reset speed
                         } else {
                             Log.w(TAG, "Unexpected END outside of Object block on line ${index + 1}")
                         }
@@ -242,7 +271,10 @@ class NexradL3AttributeService(
                     trackLine = currentStormCellTrackLine.toList(),
                     forecastIcons = currentStormCellForecastIcons.toList(),
                     hasTVS = hasTVS,
-                    hasMeso = hasMeso
+                    hasMeso = hasMeso,
+                    iconIndex = currentStormCellIconIndex,
+                    direction = currentStormCellDirection, // NEW: Add direction
+                    speed = currentStormCellSpeed // NEW: Add speed
                 )
             )
         }
@@ -251,7 +283,7 @@ class NexradL3AttributeService(
             Log.w(TAG, "No storm cells parsed from placefile.")
         }
 
-        return NexradL3AttributePlacefile(
+        val parsedPlacefile = NexradL3AttributePlacefile(
             refreshInterval = refreshInterval ?: 300,
             title = title ?: "NEXRAD Level 3 Attributes",
             iconFileUrl = iconFileUrl,
@@ -259,5 +291,7 @@ class NexradL3AttributeService(
             stormCells = stormCells.toList(), // Convert mutable list to immutable
             lastUpdatedTimestamp = System.currentTimeMillis()
         )
+        Log.d(TAG, "Placefile parsing complete. Found ${parsedPlacefile.stormCells.size} storm cells.")
+        return parsedPlacefile
     }
 }
