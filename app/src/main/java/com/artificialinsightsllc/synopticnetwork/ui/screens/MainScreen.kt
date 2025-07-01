@@ -153,7 +153,9 @@ fun MainScreen(
     var showLegendSheet by remember { mutableStateOf(false) }
     var showAlertsSheet by remember { mutableStateOf(false) } // State to control alerts bottom sheet visibility
     var selectedAlertForDialog by remember { mutableStateOf<AlertFeature?>(null) } // New state for dialog alert
-    var showRadarOverlay by remember { mutableStateOf(false) } // NEW: State to toggle radar overlay visibility
+    var showReflectivityRadarOverlay by remember { mutableStateOf(false) } // MODIFIED: State for reflectivity radar visibility
+    var showVelocityRadarOverlay by remember { mutableStateOf(false) } // NEW: State for velocity radar visibility
+
 
     // Removed local `selectedGroupedReports` state, as it will now be sourced from ViewModel
     var showGroupedReportsDialog by remember { mutableStateOf(false) }
@@ -377,18 +379,34 @@ fun MainScreen(
                 }
             }
 
-            // NEW: Radar Tile Overlay
-            if (showRadarOverlay && mapState.radarWfo != null && mapState.latestRadarTimestamp != null) {
-                // Pass the full 4-letter radar WFO (e.g., "KTBW") converted to lowercase
+            // MODIFIED: Reflectivity Radar Tile Overlay
+            if (showReflectivityRadarOverlay && mapState.radarWfo != null && mapState.latestRadarTimestamp != null) {
                 val radarOfficeCodeForTileProvider = mapState.radarWfo!!.lowercase(Locale.US) // Ensure lowercase with Locale
-                Log.d("MainScreen", "Creating RadarTileProvider with officeCode: $radarOfficeCodeForTileProvider and timestamp: ${mapState.latestRadarTimestamp}")
+                val reflectivityLayerName = "${radarOfficeCodeForTileProvider}_sr_bref" // Explicit layer name
+                Log.d("MainScreen", "Creating Reflectivity RadarTileProvider with officeCode: $radarOfficeCodeForTileProvider, layer: $reflectivityLayerName and timestamp: ${mapState.latestRadarTimestamp}")
                 if (radarOfficeCodeForTileProvider.isNotBlank()) {
                     com.google.maps.android.compose.TileOverlay(
-                        tileProvider = remember(radarOfficeCodeForTileProvider, mapState.latestRadarTimestamp) { // Add latestRadarTimestamp to remember key
-                            RadarTileProvider(radarOfficeCodeForTileProvider, okHttpClient, mapState.latestRadarTimestamp)
+                        tileProvider = remember(radarOfficeCodeForTileProvider, mapState.latestRadarTimestamp, reflectivityLayerName) {
+                            RadarTileProvider(radarOfficeCodeForTileProvider, okHttpClient, mapState.latestRadarTimestamp, reflectivityLayerName)
                         },
                         fadeIn = true,
-                        zIndex = 0f // NEW: Set zIndex to 0f for radar overlay
+                        zIndex = 0f // Set zIndex to 0f for radar overlay
+                    )
+                }
+            }
+
+            // NEW: Velocity Radar Tile Overlay
+            if (showVelocityRadarOverlay && mapState.radarWfo != null && mapState.latestRadarTimestamp != null) {
+                val radarOfficeCodeForTileProvider = mapState.radarWfo!!.lowercase(Locale.US)
+                val velocityLayerName = "${radarOfficeCodeForTileProvider}_sr_bvel" // Explicit layer name for velocity
+                Log.d("MainScreen", "Creating Velocity RadarTileProvider with officeCode: $radarOfficeCodeForTileProvider, layer: $velocityLayerName and timestamp: ${mapState.latestRadarTimestamp}")
+                if (radarOfficeCodeForTileProvider.isNotBlank()) {
+                    com.google.maps.android.compose.TileOverlay(
+                        tileProvider = remember(radarOfficeCodeForTileProvider, mapState.latestRadarTimestamp, velocityLayerName) {
+                            RadarTileProvider(radarOfficeCodeForTileProvider, okHttpClient, mapState.latestRadarTimestamp, velocityLayerName)
+                        },
+                        fadeIn = true,
+                        zIndex = 1f // Set zIndex to 1f for velocity radar (above reflectivity, below alerts)
                     )
                 }
             }
@@ -456,12 +474,20 @@ fun MainScreen(
                 }
 
                 // Action Buttons are now aligned to the bottom end of the column
-                // Pass mapState.radarWfo to ActionButtons
+                // Pass radar overlay states and toggles
                 ActionButtons(
                     navController = navController,
                     radarWfo = mapState.radarWfo,
-                    showRadarOverlay = showRadarOverlay, // Pass the state
-                    onToggleRadarOverlay = { showRadarOverlay = it } // Pass the setter
+                    showReflectivityRadarOverlay = showReflectivityRadarOverlay, // MODIFIED: Pass reflectivity state
+                    onToggleReflectivityRadarOverlay = { newValue -> // MODIFIED: Handle mutual exclusivity
+                        showReflectivityRadarOverlay = newValue
+                        if (newValue) showVelocityRadarOverlay = false
+                    },
+                    showVelocityRadarOverlay = showVelocityRadarOverlay, // NEW: Pass velocity state
+                    onToggleVelocityRadarOverlay = { newValue -> // NEW: Handle mutual exclusivity
+                        showVelocityRadarOverlay = newValue
+                        if (newValue) showReflectivityRadarOverlay = false
+                    }
                 )
             }
         }
@@ -1083,8 +1109,10 @@ private fun ActionButtons(
     navController: NavHostController,
     modifier: Modifier = Modifier,
     radarWfo: String?,
-    showRadarOverlay: Boolean, // NEW: Pass the state of the radar overlay
-    onToggleRadarOverlay: (Boolean) -> Unit // NEW: Pass the setter for the radar overlay state
+    showReflectivityRadarOverlay: Boolean, // MODIFIED: Reflectivity state
+    onToggleReflectivityRadarOverlay: (Boolean) -> Unit, // MODIFIED: Reflectivity toggle
+    showVelocityRadarOverlay: Boolean, // NEW: Velocity state
+    onToggleVelocityRadarOverlay: (Boolean) -> Unit // NEW: Velocity toggle
 ) {
     // Determine if the "Weather Products" FAB should be enabled
     val isProductFabEnabled = radarWfo != null && radarWfo.removePrefix("K").isNotBlank()
@@ -1111,13 +1139,36 @@ private fun ActionButtons(
     val productFabContainerColor = if (isProductFabEnabled) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
 
     Column(modifier = modifier, horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        // NEW: FAB for Radar Toggle
+        // MODIFIED: FAB for Reflectivity Radar Toggle
         androidx.compose.material3.FloatingActionButton(
-            onClick = { onToggleRadarOverlay(!showRadarOverlay) }, // Toggle the radar overlay state
-            containerColor = if (showRadarOverlay) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary, // Change color when active
+            onClick = {
+                val newState = !showReflectivityRadarOverlay
+                onToggleReflectivityRadarOverlay(newState)
+                // If turning reflectivity ON, turn velocity OFF
+                if (newState) {
+                    onToggleVelocityRadarOverlay(false)
+                }
+            },
+            containerColor = if (showReflectivityRadarOverlay) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
             contentColor = Color.White
         ) {
-            androidx.compose.material3.Icon(Icons.Default.Satellite, "Toggle Radar") // Using Satellite icon for radar
+            androidx.compose.material3.Icon(Icons.Default.Satellite, "Toggle Reflectivity Radar")
+        }
+
+        // NEW: FAB for Velocity Radar Toggle
+        androidx.compose.material3.FloatingActionButton(
+            onClick = {
+                val newState = !showVelocityRadarOverlay
+                onToggleVelocityRadarOverlay(newState)
+                // If turning velocity ON, turn reflectivity OFF
+                if (newState) {
+                    onToggleReflectivityRadarOverlay(false)
+                }
+            },
+            containerColor = if (showVelocityRadarOverlay) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
+            contentColor = Color.White
+        ) {
+            androidx.compose.material3.Icon(Icons.Default.Streetview, "Toggle Velocity Radar")
         }
 
         // FAB for Weather Products
@@ -1180,7 +1231,7 @@ class MarkerIconFactory(private val context: Context) {
         val baseBitmap = ContextCompat.getDrawable(context, R.drawable.weatherpin)?.let {
             val bmp = Bitmap.createBitmap(120, 120, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bmp)
-            it.setBounds(0, 0, canvas.width, canvas.height)
+            it.setBounds(0, 0, canvas.width, it.intrinsicHeight) // Use intrinsic height for correct scaling
             it.draw(canvas)
             bmp
         } ?: return null // Return null if the base drawable cannot be loaded
@@ -1334,9 +1385,8 @@ fun MainScreenPreview() {
             ) {
                 MapTypeSelector(currentMapType = MapType.NORMAL, onMapTypeSelected = {})
                 // Provide dummy values for preview
-                ActionButtons(navController = rememberNavController(), radarWfo = "KTBW", showRadarOverlay = false, onToggleRadarOverlay = {})
+                ActionButtons(navController = rememberNavController(), radarWfo = "KTBW", showReflectivityRadarOverlay = false, onToggleReflectivityRadarOverlay = {}, showVelocityRadarOverlay = false, onToggleVelocityRadarOverlay = {})
             }
         }
     }
 }
-

@@ -26,17 +26,20 @@ import kotlin.math.exp
  * @param httpClient An OkHttpClient instance for making network requests.
  * @param latestRadarTimestamp The latest available ISO 8601 timestamp for the radar data,
  * fetched from the GetCapabilities response.
+ * @param radarLayerName The specific radar layer name to request (e.g., "ktbw_sr_bref" or "ktbw_sr_bvel").
  */
 class RadarTileProvider(
     private val officeCode: String,
     private val httpClient: OkHttpClient,
-    private val latestRadarTimestamp: String? // NEW: Accept latest timestamp
+    private val latestRadarTimestamp: String?,
+    private val radarLayerName: String // MODIFIED: New parameter for dynamic layer name
 ) : TileProvider {
 
     // Constants for WMS GetMap request
     private val TILE_SIZE = 256 // Google Maps tile size in pixels
-    private val WMS_LAYER_NAME = "${officeCode.lowercase()}_sr_bref" // Using Super Resolution Base Reflectivity
-    private val WMS_STYLE = "radar_reflectivity" // Style name from GetCapabilities
+    // MODIFIED: Use the passed radarLayerName instead of hardcoding
+    private val WMS_LAYER_NAME = radarLayerName
+    private val WMS_STYLE = "radar_reflectivity" // Style name from GetCapabilities (assuming common style for both)
     private val WMS_CRS = "EPSG:3857" // Web Mercator, compatible with Google Maps
     private val WMS_VERSION = "1.3.0"
     private val WMS_FORMAT = "image/png"
@@ -66,7 +69,7 @@ class RadarTileProvider(
         // Construct the WMS GetMap URL
         val wmsUrl = buildWmsUrl(bbox)
 
-        // NEW: Log the full WMS URL for debugging
+        // Log the full WMS URL for debugging
         Log.d("RadarTileProvider", "Fetching radar tile URL: $wmsUrl")
 
         // Fetch the image bytes
