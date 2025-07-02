@@ -156,6 +156,7 @@ class MainViewModel : ViewModel() {
      * Called when the map is ready and location permissions are granted.
      * Fetches current location and starts alert polling.
      */
+    @SuppressLint("MissingPermission")
     fun onMapReady(context: Context) {
         viewModelScope.launch {
             val location = getCurrentLocation(context)
@@ -190,7 +191,8 @@ class MainViewModel : ViewModel() {
                     userGeohash3Char = userGeohash3Char,
                     userStateCode = userStateCode,
                     userForecastZone = userForecastZone,
-                    radarWfo = radarWfo // Set the radar WFO
+                    radarWfo = radarWfo, // Set the radar WFO
+                    mapProperties = it.mapProperties.copy(isMyLocationEnabled = true) // NEW: Enable "My Location" layer
                 )
             }
 
@@ -571,39 +573,6 @@ class MainViewModel : ViewModel() {
             }
         }
     }
-
-    /**
-     * NEW: The actual coroutine for periodically fetching and parsing the placefile.
-     */
-    private fun startPlacefilePolling(radarWfo: String, refreshIntervalSeconds: Long) {
-        placefilePollingJob = viewModelScope.launch {
-            while (true) {
-                try {
-                    // The placefile URL uses the 3-letter radar ID, which is the WFO without the 'K' prefix
-                    val radarSiteId = radarWfo.removePrefix("K")
-                    if (radarSiteId.isNotBlank()) {
-                        val rawText = nexradL3AttributeService.fetchPlacefile(radarSiteId)
-                        if (rawText != null) {
-                            val parsedPlacefile = nexradL3AttributeService.parsePlacefile(rawText)
-                            _mapState.update { it.copy(nexradL3Attributes = parsedPlacefile) }
-                            Log.d("MainViewModel", "Successfully updated placefile data for $radarSiteId.")
-                        } else {
-                            Log.w("MainViewModel", "Failed to fetch raw placefile text for $radarSiteId.")
-                            _mapState.update { it.copy(nexradL3Attributes = null) } // Clear old data on fetch failure
-                        }
-                    } else {
-                        Log.w("MainViewModel", "Radar WFO is blank, cannot fetch placefile.")
-                        _mapState.update { it.copy(nexradL3Attributes = null) } // Clear data if WFO is invalid
-                    }
-                } catch (e: Exception) {
-                    Log.e("MainViewModel", "Error polling for placefile data: ${e.message}", e)
-                    _mapState.update { it.copy(nexradL3Attributes = null) } // Clear data on error
-                }
-                delay(refreshIntervalSeconds * 1000L)
-            }
-        }
-    }
-
 
     /**
      * Handles a click on an individual report marker.

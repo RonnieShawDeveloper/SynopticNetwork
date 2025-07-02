@@ -20,12 +20,12 @@ if (localPropertiesFile.exists()) {
 
 android {
     namespace = "com.artificialinsightsllc.synopticnetwork"
-    compileSdk = 34
+    compileSdk = 36 // Corrected: Updated compileSdk to 36
 
     defaultConfig {
         applicationId = "com.artificialinsightsllc.synopticnetwork"
         minSdk = 29
-        targetSdk = 34
+        targetSdk = 34 // targetSdk can remain 34 for now, or be updated if desired
         versionCode = 1
         versionName = "1.0"
 
@@ -68,7 +68,7 @@ android {
         buildConfig = true
     }
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.1"
+        kotlinCompilerExtensionVersion = "1.5.1" // Keep this version as it's compatible with Kotlin 1.9.22
     }
     packaging {
         resources {
@@ -79,7 +79,7 @@ android {
 
 dependencies {
 
-    implementation(platform("androidx.compose:compose-bom:2024.06.00"))
+    implementation(platform("androidx.compose:compose-bom:2025.06.01")) // Updated BOM
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
@@ -139,7 +139,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-    androidTestImplementation(platform("androidx.compose:compose-bom:2024.06.00"))
+    androidTestImplementation(platform("androidx.compose:compose-bom:2025.06.01")) // Updated BOM here too
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
